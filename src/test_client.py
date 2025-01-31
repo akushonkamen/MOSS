@@ -64,10 +64,16 @@ async def chat():
         try:
             websocket = await connect_with_retry(uri)
             print("已连接到服务器。")
-            print("输入'voice'开始录音（将录制5秒），输入'quit'退出。")
+            print("输入'voice'开始语音对话（自动检测语音），输入'quit'退出。")
+            print("提示：说话时会自动开始录音，停顿超过1秒会自动结束录音。")
             
             if not recorder:
-                recorder = AudioRecorder()  # 创建录音器实例
+                recorder = AudioRecorder(
+                    silence_threshold=0.03,    # 静音阈值
+                    silence_duration=1.0,      # 静音持续1秒后停止
+                    max_duration=10.0,         # 最长录音10秒
+                    min_duration=1.0           # 最短录音1秒
+                )
             
             # 启动心跳任务
             heartbeat_task = asyncio.create_task(handle_heartbeat(websocket))
@@ -80,21 +86,15 @@ async def chat():
                         return  # 使用return而不是break，确保完全退出
                     
                     if user_input.lower() == 'voice':
-                        print("开始录音...（5秒后自动停止）")
                         audio_data = None
                         temp_file = None
                         
                         try:
                             recorder.start_recording()
                             
-                            # 录制5秒
-                            for _ in range(50):  # 5秒 = 50个0.1秒的块
-                                try:
-                                    recorder.record_chunk()
-                                    time.sleep(0.1)  # 每个块0.1秒
-                                except Exception as e:
-                                    print(f"录音过程中出错: {str(e)}")
-                                    break
+                            # 持续录音直到检测到应该停止
+                            while recorder.record_chunk():
+                                await asyncio.sleep(0.01)  # 避免CPU占用过高
                             
                             print("录音结束，正在处理...")
                             # 停止录音并获取音频数据
@@ -167,6 +167,21 @@ async def chat():
                                     print(f"\n{data['content']}")
                                 if "完成" in data["content"]:
                                     response_complete = True
+                                    # 如果是语音模式，自动开始下一轮录音
+                                    if user_input.lower() == 'voice':
+                                        print("\n你: ", end="", flush=True)
+                                        recorder.start_recording()
+                                        while recorder.record_chunk():
+                                            await asyncio.sleep(0.01)
+                                        print("录音结束，正在处理...")
+                                        temp_file, audio_data = recorder.stop_recording()
+                                        await websocket.send(json.dumps({
+                                            "type": "audio",
+                                            "data": audio_data.hex(),
+                                            "temperature": 0.7
+                                        }))
+                                        if temp_file and os.path.exists(temp_file):
+                                            os.unlink(temp_file)
                             elif data["type"] == "ping":
                                 await websocket.send(json.dumps({"type": "pong"}))
                             elif data["type"] == "pong":
