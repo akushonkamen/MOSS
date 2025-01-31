@@ -1,0 +1,28 @@
+name: moss
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - fastapi
+  - uvicorn
+  - websockets
+  - pydantic
+  - python-multipart
+  - aiohttp
+  - ffmpeg
+  - pytorch
+  - torchaudio
+  - numpy<2.0
+  - pip:
+    - python-jose[cryptography]
+    - passlib[bcrypt]
+    - pydantic-settings
+    - loguru
+    - python-dotenv
+    - openai-whisper
+    - sounddevice
+    - soundfile
+    - pyaudio
+    - keyboard 
