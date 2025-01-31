@@ -287,4 +287,59 @@ ws://localhost:8000/ws/stt?token=your_jwt_token
 3. 重连策略：
 - 指数退避重连
 - 最大重试间隔：30秒
-- 最大重试次数：5次 
+- 最大重试次数：5次
+
+# 语音识别服务 API
+
+## WebSocket 语音识别
+
+### 端点
+`ws://localhost:8000/ws/chat`
+
+### 请求格式
+```json
+{
+    "type": "audio",
+    "data": "音频数据（十六进制字符串）",
+    "temperature": 0.7
+}
+```
+
+### 智能语音检测参数
+录音器支持以下可配置参数：
+- `silence_threshold`: 静音检测阈值（默认：0.03）
+- `silence_duration`: 静音持续时间（默认：1.0秒）
+- `max_duration`: 最大录音时间（默认：10.0秒）
+- `min_duration`: 最小录音时间（默认：1.0秒）
+
+### 响应格式
+```json
+{
+    "type": "status",
+    "content": "录音状态信息"
+}
+```
+或
+```json
+{
+    "type": "llm_response",
+    "content": "语音识别结果"
+}
+```
+
+### 错误处理
+- 输入溢出：系统会自动跳过溢出的数据块并继续录音
+- 设备错误：自动选择可用的音频输入设备
+- 连接断开：支持自动重连机制
+
+### 示例代码
+```python
+recorder = AudioRecorder(
+    silence_threshold=0.03,    # 静音阈值
+    silence_duration=1.0,      # 静音持续1秒后停止
+    max_duration=10.0,         # 最长录音10秒
+    min_duration=1.0           # 最短录音1秒
+)
+```
+
+# 其他API文档 

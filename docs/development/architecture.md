@@ -54,8 +54,13 @@ moss/
 - 实现类：`src/services/stt/whisper_service.py`
 - 职责：
   - 音频预处理
+  - 智能语音检测
+    - 静音检测算法
+    - 自动录音控制
+    - 可配置的阈值参数
   - Whisper模型调用
   - 结果后处理
+  - 错误处理和恢复机制
 
 ### 2.2 LLM推理模块
 - 接口定义：`src/services/llm/interface.py`
