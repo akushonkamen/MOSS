@@ -1,182 +1,149 @@
-# MOSS 系统架构设计文档
+# MOSS 系统架构
 
-## 1. 项目结构
+## 1. 整体架构
+
+MOSS是一个基于Python的智能家居控制系统，采用微服务架构设计。系统主要由以下几个核心组件构成：
+
+### 1.1 核心服务
+- LLM服务：负责自然语言理解和指令解析
+- 设备控制服务：管理和控制智能设备
+- 语音识别服务（STT）：将语音转换为文本
+- 语音合成服务（TTS）：将文本转换为语音
+
+### 1.2 通信机制
+- REST API：提供标准的HTTP接口
+- WebSocket：实现实时通信和状态推送
+- 进程间通信：基于HTTP的设备服务器与客户端通信
+
+## 2. 代码结构
+
 ```
-moss/
-├── src/
-│   ├── core/                    # 核心功能模块
-│   │   ├── config.py           # 配置管理
-│   │   ├── security.py         # 安全相关
-│   │   └── exceptions.py       # 自定义异常
-│   │
-│   ├── api/                    # API 接口层
-│   │   ├── v1/                # API版本1
-│   │   │   ├── endpoints/     # API端点
-│   │   │   └── dependencies/  # 依赖注入
-│   │   └── websocket/        # WebSocket处理
-│   │
-│   ├── services/              # 业务服务层
-│   │   ├── stt/              # 语音识别服务
-│   │   ├── tts/              # 语音合成服务
-│   │   ├── llm/              # LLM服务
-│   │   └── device/           # 设备控制服务
-│   │
-│   ├── models/               # 数据模型
-│   │   ├── domain/          # 领域模型
-│   │   └── schemas/         # Pydantic模型
-│   │
-│   ├── db/                  # 数据库相关
-│   │   ├── repositories/    # 数据访问层
-│   │   └── migrations/      # 数据库迁移
-│   │
-│   └── utils/               # 工具函数
-│
-├── tests/                   # 测试目录
-│   ├── unit/               # 单元测试
-│   ├── integration/        # 集成测试
-│   └── e2e/               # 端到端测试
-│
-├── docs/                   # 文档
-│   ├── api/               # API文档
-│   ├── development/       # 开发文档
-│   └── deployment/        # 部署文档
-│
-├── scripts/               # 工具脚本
-├── pyproject.toml        # 项目依赖配置
-├── .env.example          # 环境变量示例
-└── README.md             # 项目说明
+src/
+├── __init__.py                 # 包初始化
+├── services/                   # 核心服务
+│   ├── __init__.py
+│   ├── devices/               # 设备控制相关
+│   │   ├── __init__.py
+│   │   ├── base.py           # 设备基类和注册表
+│   │   ├── device_server.py  # 设备服务器基类
+│   │   ├── device_client.py  # 设备客户端基类
+│   │   ├── smart_devices.py  # 具体设备实现
+│   │   ├── light_server.py   # 智能灯服务器
+│   │   ├── ac_server.py      # 空调服务器
+│   │   ├── curtain_server.py # 窗帘服务器
+│   │   └── function_registry.py # 设备控制函数注册
+│   └── llm/                   # LLM服务相关
+│       ├── __init__.py
+│       ├── deepseek_service.py # DeepSeek模型服务
+│       ├── function_call.py    # 函数调用支持
+│       ├── function_parser.py  # 函数调用解析
+│       └── prompt_manager.py   # 提示词管理
+├── test_smart_home.py         # 主程序入口
+└── start_devices.sh           # 设备服务启动脚本
 ```
 
-## 2. 核心模块设计
+## 3. 核心组件说明
 
-### 2.1 语音识别模块 (STT)
-- 接口定义：`src/services/stt/interface.py`
-- 实现类：`src/services/stt/whisper_service.py`
-- 职责：
-  - 音频预处理
-  - 智能语音检测
-    - 静音检测算法
-    - 自动录音控制
-    - 可配置的阈值参数
-  - Whisper模型调用
-  - 结果后处理
-  - 错误处理和恢复机制
+### 3.1 LLM服务
 
-### 2.2 LLM推理模块
-- 接口定义：`src/services/llm/interface.py`
-- 实现类：`src/services/llm/deepseek_service.py`
-- 职责：
-  - Ollama API封装
-  - 提示词管理
-  - 结果解析
+#### 3.1.1 DeepSeek服务
+- 实现自然语言理解
+- 支持函数调用
+- 提供流式响应
+- 管理对话上下文
 
-### 2.3 设备控制模块
-- 接口定义：`src/services/device/interface.py`
-- 实现类：
-  - `src/services/device/mqtt_controller.py`
-  - `src/services/device/http_controller.py`
-- 职责：
-  - 设备指令转换
-  - 协议适配
-  - 状态管理
+#### 3.1.2 提示词管理
+- 模板化提示词系统
+- 版本控制支持
+- 参数化配置
+- YAML/JSON格式支持
 
-### 2.4 语音合成模块 (TTS)
-- 接口定义：`src/services/tts/interface.py`
-- 实现类：`src/services/tts/coqui_service.py`
-- 职责：
-  - 文本预处理
-  - TTS模型调用
-  - 音频缓存管理
+#### 3.1.3 函数调用系统
+- 函数注册机制
+- 参数验证
+- 类型转换
+- 结果处理
 
-## 3. 接口设计
+### 3.2 设备控制服务
 
-### 3.1 REST API
-- 语音识别：`POST /api/v1/stt`
-- 语音合成：`POST /api/v1/tts`
-- 设备控制：`POST /api/v1/device/{device_id}/control`
+#### 3.2.1 设备抽象层
+- 设备基类定义
+- 统一状态管理
+- 设备注册表
 
-### 3.2 WebSocket
-- 实时状态更新：`/ws/device-status`
-- 双向通信：`/ws/chat`
+#### 3.2.2 设备服务器
+- FastAPI实现
+- 状态查询接口
+- 命令执行接口
+- 异步操作支持
 
-## 4. 数据模型
+#### 3.2.3 设备客户端
+- HTTP客户端实现
+- 错误处理
+- 状态同步
+- 类型安全
 
-### 4.1 核心模型
-```python
-# 用户指令
-class Command(BaseModel):
-    action: str
-    target: str
-    parameters: Dict[str, Any]
-    
-# 设备状态
-class DeviceState(BaseModel):
-    device_id: str
-    status: str
-    last_updated: datetime
-```
+#### 3.2.4 支持的设备类型
+- 智能灯
+- 空调
+- 窗帘
 
-## 5. 安全设计
+## 4. 通信流程
 
-### 5.1 认证机制
-- JWT token认证
-- WebSocket连接验证
-- API访问限制
+### 4.1 设备控制流程
+1. 用户输入自然语言指令
+2. LLM服务解析指令
+3. 函数解析器识别设备操作
+4. 设备客户端发送命令
+5. 设备服务器执行操作
+6. 返回执行结果
+7. LLM服务生成自然语言响应
 
-### 5.2 数据安全
-- 传输加密 (TLS)
-- 敏感数据脱敏
-- 审计日志
+### 4.2 状态同步流程
+1. 设备状态变更
+2. 服务器推送更新
+3. 客户端接收更新
+4. 更新本地状态
+5. 触发UI更新
 
-## 6. 性能优化
+## 5. 安全机制
 
-### 6.1 缓存策略
-- Redis缓存层
-- 模型预热
-- 音频缓存
+### 5.1 API安全
+- 认证中间件
+- 参数验证
+- 错误处理
+- 日志记录
 
-### 6.2 异步处理
-- Celery任务队列
-- 异步IO操作
-- 并发控制
+### 5.2 设备安全
+- 本地网络限制
+- 命令验证
+- 状态保护
+- 错误恢复
 
-## 7. 测试策略
+## 6. 部署架构
 
-### 7.1 单元测试
-- 模块隔离测试
-- Mock外部依赖
-- 参数边界测试
+### 6.1 开发环境
+- Poetry依赖管理
+- Docker容器化
+- 单元测试覆盖
+- 类型检查
 
-### 7.2 集成测试
-- API端点测试
-- 服务间交互测试
-- 数据流测试
+### 6.2 生产环境
+- 容器编排
+- 负载均衡
+- 监控告警
+- 日志聚合
 
-### 7.3 端到端测试
-- 完整流程测试
-- 性能测试
-- 负载测试
+## 7. 未来规划
 
-## 8. 监控告警
+### 7.1 功能增强
+- 设备自动发现
+- 设备分组管理
+- 场景模式支持
+- 定时任务
 
-### 8.1 系统监控
-- 服务健康检查
-- 资源使用监控
-- 性能指标采集
-
-### 8.2 业务监控
-- 用户行为分析
-- 错误率监控
-- 响应时间监控
-
-## 9. 部署方案
-
-### 9.1 开发环境
-- Docker Compose
-- 本地开发配置
-- 调试工具
-
-### 9.2 生产环境
-- Kubernetes集群
-- 自动扩缩容
-- 灾备方案 
+### 7.2 性能优化
+- 缓存优化
+- 并发处理
+- 资源监控
+- 负载测试 
