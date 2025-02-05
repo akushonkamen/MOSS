@@ -45,7 +45,7 @@ src/
 │   │   └── curtain_server.py # 窗帘服务器
 │   ├── llm/                   # LLM服务相关
 │   │   ├── __init__.py
-│   │   ├── deepseek_service.py # DeepSeek模型服务
+│   │   ├── llm_service.py # LLM模型服务
 │   │   ├── decoderAgent.py   # 意图理解Agent
 │   │   ├── expertAgent.py    # 动作生成Agent
 │   │   ├── function_call.py  # 函数调用支持
@@ -63,8 +63,8 @@ src/
 
 ### 3.1 LLM服务
 
-#### 3.1.1 DeepSeek服务
-- 基于llama3.1模型实现
+#### 3.1.1 LLM服务
+- 基于qwen2.5:32b模型实现
 - 支持函数调用
 - 提供流式响应
 - 管理对话上下文

@@ -1,0 +1,13 @@
+category: test
+created_at: 2025-01-31 18:14:43.940637
+description: Test template
+name: test_template
+parameters:
+  user_input:
+    description: User input
+    type: string
+tags:
+- test
+template: 'Test prompt: {user_input}'
+updated_at: 2025-01-31 18:14:43.940886
+version: 1.0.0

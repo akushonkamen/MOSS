@@ -9,7 +9,7 @@ import asyncio
 import time
 
 from .core.config import settings
-from .services.llm.deepseek_service import DeepSeekService
+from .services.llm.llm_service import llm_service
 from .services.stt.whisper_service import WhisperService
 from .services.tts.edge_tts_service import EdgeTTSService
 
@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # 初始化服务
-llm_service = DeepSeekService()
+llm_service = llm_service()
 stt_service = WhisperService(model_name="large")
 tts_service = EdgeTTSService()
 

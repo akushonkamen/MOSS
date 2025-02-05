@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     
     # LLM设置
     OLLAMA_API_URL: str = "http://localhost:11434/api"
+    DEFAULT_MODEL: str = "llama3.2-vision:latest"
     
     # 音频设置
     AUDIO_CACHE_DIR: str = "./media/audio"
