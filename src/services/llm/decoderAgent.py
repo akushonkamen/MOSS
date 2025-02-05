@@ -10,13 +10,18 @@ from .intent import DeviceIntent, IntentParameter, IntentType
 
 logger = logging.getLogger(__name__)
 
-class decoderAgent:
+class DecoderAgent:
     """意图理解模型"""
     
-    def __init__(self):
-        """初始化意图理解模型"""
-        self.api_url = "http://localhost:11434/api/chat"
-        self.model_name = "llama3.2-vision:latest"
+    def __init__(self, api_url: str = "http://localhost:11434/api/chat", model_name: str = "llama3.2-vision:latest"):
+        """初始化意图理解模型
+        
+        Args:
+            api_url: LLM API地址
+            model_name: 模型名称
+        """
+        self.api_url = api_url
+        self.model_name = model_name
         
     def _build_prompt(self, user_input: str, devices: List[DeviceInfo]) -> str:
         """构建提示词

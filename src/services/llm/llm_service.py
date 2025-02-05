@@ -25,10 +25,10 @@ from tabulate import tabulate
 from src.services.devices.device_client import SmartLightClient, SmartACClient, SmartCurtainClient
 from ..function_calling.registry import FunctionDefinition
 from ..core.entity import registry as entity_registry
-from .decoderAgent import decoderAgent
+from .decoderAgent import DecoderAgent
 from .expertAgent import ExpertAgent
-from .intent import IntentType, DeviceIntent, IntentParameter
-from src.services.devices.device_info import DeviceInfo
+from .intent import DeviceIntent, IntentParameter, IntentType
+from ..devices.device_info import DeviceInfo
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class llm_service(LLMService):
         self.functions: Dict[str, Dict[str, Any]] = {}  # 可用函数集合
         
         # 初始化两个Agent
-        self.decoder = decoderAgent()
+        self.decoder = DecoderAgent()
         self.expert = ExpertAgent()
         
     def register_function(self, func: Callable, description: str = "", **kwargs):

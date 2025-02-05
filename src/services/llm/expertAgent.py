@@ -25,10 +25,15 @@ class ActionResponse:
 class ExpertAgent:
     """动作生成模型"""
     
-    def __init__(self):
-        """初始化动作生成模型"""
-        self.api_url = "http://localhost:11434/api/chat"
-        self.model_name = "llama3.1:latest"
+    def __init__(self, api_url: str = "http://localhost:11434/api/chat", model_name: str = "llama3.1:latest"):
+        """初始化动作生成模型
+        
+        Args:
+            api_url: LLM API地址
+            model_name: 模型名称
+        """
+        self.api_url = api_url
+        self.model_name = model_name
         
     def _build_prompt(self, intent: Dict[str, Any], device: DeviceInfo) -> str:
         """构建提示词

@@ -47,41 +47,74 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-1. 启动服务器：
+1. 启动所有服务：
 ```bash
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+python src/start_services.py
 ```
 
-2. 运行客户端：
+2. 或者分别启动各个服务：
+
+启动设备服务：
 ```bash
-python -m src.test_client
+python src/start_device_service.py
+```
+
+启动语音服务：
+```bash
+python src/start_voice_service.py
 ```
 
 3. 使用方式：
-   - 输入 "voice" 开始5秒语音录制
-   - 直接输入文本进行对话
-   - 输入 "quit" 退出程序
+   - 直接对着麦克风说话
+   - 支持的语音命令示例：
+     - "打开客厅的灯"
+     - "把空调温度调到26度"
+     - "关闭所有设备"
+   - 按Ctrl+C退出程序
 
 ## 项目结构
 
 ```
 Moss/
 ├── src/
-│   ├── core/           # 核心配置
-│   ├── services/       # 服务模块
-│   │   ├── llm/       # 大语言模型服务
-│   │   ├── stt/       # 语音识别服务
-│   │   └── tts/       # 语音合成服务
-│   ├── utils/         # 工具函数
-│   ├── main.py        # 主服务器
-│   └── test_client.py # 测试客户端
+│   ├── core/              # 核心配置
+│   ├── services/          # 服务模块
+│   │   ├── llm/          # 大语言模型服务
+│   │   ├── audio/        # 音频服务
+│   │   │   ├── recorder/ # 录音服务
+│   │   │   └── player/   # 播放服务
+│   │   ├── devices/      # 设备控制服务
+│   │   └── tts/         # 语音合成服务
+│   ├── start_services.py  # 主服务启动脚本
+│   ├── start_voice_service.py  # 语音服务启动脚本
+│   └── start_device_service.py # 设备服务启动脚本
 ├── README.md
 └── requirements.txt
 ```
 
+## 设备支持
+
+当前支持的智能设备：
+
+1. 智能灯光 (SmartLight)
+   - 开关控制
+   - 亮度调节 (0-100%)
+
+2. 智能空调 (SmartAC)
+   - 开关控制
+   - 温度调节 (16-30°C)
+   - 模式切换 (自动/制冷/制热/除湿/送风)
+
+3. 智能窗帘 (SmartCurtain)
+   - 开关控制
+   - 位置调节 (0-100%)
+
 ## 开发计划
 
-- [ ] 支持更多语音模型
+- [x] 支持语音控制
+- [x] 集成大语言模型
+- [x] 添加设备控制功能
+- [ ] 支持更多设备类型
 - [ ] 添加图形用户界面
 - [ ] 优化对话上下文管理
 - [ ] 添加更多语音定制选项
