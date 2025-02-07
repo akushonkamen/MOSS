@@ -6,6 +6,8 @@ import tempfile
 import wave
 from typing import Optional, Callable, List, Dict, Any, Literal, Awaitable
 from dataclasses import dataclass
+import concurrent.futures
+from functools import partial
 
 # 第三方库
 import numpy as np
@@ -17,13 +19,24 @@ from .recorder_service import AudioRecorder, AudioConfig as RecorderConfig
 from .player_service import AudioPlayer, AudioConfig as PlayerConfig
 from .vad_service import VADService, VADResult
 from .tts_service import TTSService
+from .config import VoiceConfig
 
 WhisperModelSize = Literal["tiny", "base", "small", "medium", "large"]
 
 @dataclass
 class VoiceConfig:
-    recorder_config: RecorderConfig
-    player_config: PlayerConfig
+    recorder_config: RecorderConfig = RecorderConfig(
+        channels=1,
+        sample_rate=16000,
+        sample_width=2,
+        chunk_size=480
+    )
+    player_config: PlayerConfig = PlayerConfig(
+        channels=1,
+        sample_rate=16000,
+        sample_width=2,
+        chunk_size=480
+    )
     vad_aggressiveness: int = 3
     silence_duration: float = 1.0  # 静音持续时间阈值(秒)
     min_audio_length: float = 0.5  # 最小音频长度阈值(秒)
@@ -31,58 +44,145 @@ class VoiceConfig:
     whisper_language: str = "zh"  # 设置为中文
 
 class VoiceInteractionManager:
+    """语音交互管理器"""
+    
     def __init__(
         self,
         config: VoiceConfig,
+        on_transcribe: Callable[[str], None],
         on_speech_start: Optional[Callable[[], None]] = None,
-        on_speech_end: Optional[Callable[[], None]] = None,
-        on_transcribe: Optional[Callable[[str], Awaitable[None]]] = None
+        on_speech_end: Optional[Callable[[], None]] = None
     ):
-        """
-        初始化语音交互管理器
+        """初始化语音交互管理器
         
         Args:
             config: 语音配置
-            on_speech_start: 说话开始回调
-            on_speech_end: 说话结束回调
-            on_transcribe: 语音识别结果回调
+            on_transcribe: 语音识别回调函数
+            on_speech_start: 说话开始回调函数
+            on_speech_end: 说话结束回调函数
         """
         self.logger = logging.getLogger(__name__)
-        self.logger.info("开始初始化语音交互管理器...")
+        self.config = config
+        self.on_transcribe = on_transcribe
+        self.on_speech_start = on_speech_start
+        self.on_speech_end = on_speech_end
         
+        # 初始化录音器
+        self.recorder = AudioRecorder(
+            config=config.recorder_config
+        )
+        
+        # 初始化播放器
+        self.player = AudioPlayer(
+            config=config.player_config
+        )
+        
+        # 初始化VAD服务
+        self.vad = VADService(aggressiveness=config.vad_aggressiveness)
+        
+        # 初始化TTS服务
+        self.tts_service = TTSService()
+        
+        # 初始化语音识别模型
+        self.model = None
+        
+        # 初始化状态变量
+        self._is_speaking = False
+        self._silence_frames = 0
+        self._speech_frames = []
+        self._is_running = False
+        
+        # 创建线程池
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        
+    async def initialize(self):
+        """初始化语音交互管理器"""
         try:
-            self.config = config
-            self.logger.debug(f"配置信息: {config}")
+            self.logger.info("开始初始化语音交互管理器...")
             
-            self.logger.debug("初始化录音设备...")
-            self.recorder = AudioRecorder(config.recorder_config)
-            
-            self.logger.debug("初始化播放设备...")
-            self.player = AudioPlayer(config.player_config)
-            
-            self.logger.debug(f"初始化VAD服务 (灵敏度: {config.vad_aggressiveness})...")
-            self.vad = VADService(config.vad_aggressiveness)
-            
-            self.logger.debug("初始化TTS服务...")
-            self.tts_service = TTSService()
-            
-            self.on_speech_start = on_speech_start
-            self.on_speech_end = on_speech_end
-            self.on_transcribe = on_transcribe
-            
-            self.logger.info(f"正在加载Whisper {config.whisper_model} 模型...")
-            self.whisper = whisper.load_model(config.whisper_model)
+            # 加载Whisper模型
+            self.logger.info("正在加载Whisper large 模型...")
+            self.model = whisper.load_model("large")
             self.logger.info("Whisper模型加载完成")
-            
-            self._is_running = False
-            self._is_speaking = False
-            self._silence_frames = 0
-            self._speech_frames = []
             
             self.logger.info("语音交互管理器初始化完成")
             
         except Exception as e:
-            self.logger.error(f"初始化语音交互管理器失败: {e}", exc_info=True)
+            self.logger.error(f"初始化语音交互管理器失败: {str(e)}")
+            raise
+            
+    async def start(self):
+        """启动语音交互"""
+        try:
+            # 播放欢迎语
+            await self.speak("你好，我是你的智能家居助手，请说话")
+            
+            # 开始录音
+            await self.recorder.start()
+            
+            # 开始监听
+            self._is_running = True
+            asyncio.create_task(self.start_listening())
+            
+        except Exception as e:
+            self.logger.error(f"启动语音交互失败: {str(e)}")
+            raise
+            
+    async def stop(self):
+        """停止语音交互"""
+        try:
+            # 停止录音
+            await self.recorder.stop()
+            
+            # 播放告别语
+            await self.speak("再见")
+            
+        except Exception as e:
+            self.logger.error(f"停止语音交互失败: {str(e)}")
+            raise
+            
+    async def speak(self, text: str):
+        """播放语音
+        
+        Args:
+            text: 要播放的文本
+        """
+        try:
+            await self.player.speak(text)
+        except Exception as e:
+            self.logger.error(f"播放语音失败: {str(e)}")
+            raise
+            
+    def _on_speech_start(self):
+        """说话开始回调"""
+        if self.on_speech_start:
+            self.on_speech_start()
+            
+    def _on_speech_end(self, audio_data: bytes):
+        """说话结束回调
+        
+        Args:
+            audio_data: 音频数据
+        """
+        if self.on_speech_end:
+            self.on_speech_end()
+            
+        # 进行语音识别
+        try:
+            # 保存音频文件
+            with open("temp.wav", "wb") as f:
+                f.write(audio_data)
+                
+            # 识别音频
+            result = self.model.transcribe("temp.wav", language="zh")
+            text = result["text"].strip()
+            
+            # 调用回调函数
+            if text:
+                self.on_transcribe(text)
+                
+        except Exception as e:
+            self.logger.error(f"语音识别失败: {str(e)}")
             raise
         
     def _save_wav(self, frames: list[bytes], filename: str):
@@ -149,23 +249,29 @@ class VoiceInteractionManager:
                             # 保存WAV文件
                             self._save_wav(normalized_frames, temp_path)
                             
-                            # 语音识别
-                            result = self.whisper.transcribe(
-                                temp_path,
-                                language=self.config.whisper_language,
-                                task="transcribe",
-                                temperature=0.0,  # 使用确定性解码
-                                compression_ratio_threshold=2.4,  # 控制输出长度
-                                no_speech_threshold=0.6,  # 提高无语音检测阈值
-                                condition_on_previous_text=False  # 不使用上下文
+                            # 在线程池中执行语音识别
+                            loop = asyncio.get_running_loop()
+                            result = await loop.run_in_executor(
+                                self._thread_pool,
+                                partial(
+                                    self.model.transcribe,
+                                    temp_path,
+                                    language=self.config.whisper_language,
+                                    task="transcribe",
+                                    temperature=0.0,
+                                    compression_ratio_threshold=2.4,
+                                    no_speech_threshold=0.6,
+                                    condition_on_previous_text=False
+                                )
                             )
                             
                             text = result["text"].strip()
                             
                             if text and self.on_transcribe:
-                                await self.on_transcribe(text)
+                                # 使用asyncio.create_task来处理异步回调
+                                asyncio.create_task(self.on_transcribe(text))
                         except Exception as e:
-                            logger.error(f"语音识别错误: {e}")
+                            self.logger.error(f"语音识别错误: {e}")
                         finally:
                             # 删除临时文件
                             if os.path.exists(temp_path):
@@ -175,14 +281,21 @@ class VoiceInteractionManager:
                     
     async def start_listening(self):
         """开始监听音频输入"""
-        async for chunk in self.recorder.record_stream():
-            if not self._is_running:
-                break
-            try:
-                await self.process_audio_chunk(chunk)
-            except Exception as e:
-                logger.error(f"处理音频块错误: {e}")
-            
+        try:
+            while True:
+                # 从录音器读取音频数据
+                audio_chunk = await self.recorder.read()
+                if audio_chunk is None:
+                    await asyncio.sleep(0.001)  # 短暂休眠避免CPU占用过高
+                    continue
+                    
+                # 处理音频数据
+                await self.process_audio_chunk(audio_chunk)
+                
+        except Exception as e:
+            logger.error(f"音频处理发生错误: {str(e)}")
+            raise
+        
     async def speak(self, text: str) -> bool:
         """文本转语音并播放
         
@@ -221,11 +334,6 @@ class VoiceInteractionManager:
         except Exception as e:
             self.logger.error(f"语音合成或播放错误: {e}", exc_info=True)
             return False
-        
-    def start(self):
-        """启动语音交互服务"""
-        self._is_running = True
-        asyncio.create_task(self.start_listening())
         
     async def stop(self):
         """停止语音交互"""

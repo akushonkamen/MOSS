@@ -33,6 +33,25 @@ class DeviceStateEvent(str, Enum):
     VALIDATION_FAILED = "validation_failed"
     HISTORY_ADDED = "history_added"
 
+class StateChangeType(Enum):
+    """状态变更类型"""
+    POWER = "power"
+    BRIGHTNESS = "brightness"
+    TEMPERATURE = "temperature"
+    MODE = "mode"
+    POSITION = "position"
+    CUSTOM = "custom"
+
+@dataclass
+class StateChange:
+    """状态变更"""
+    type: StateChangeType
+    device_id: str
+    old_value: Any
+    new_value: Any
+    timestamp: float
+    metadata: Optional[Dict[str, Any]] = None
+
 @dataclass
 class StateTransition:
     """状态转换定义"""
@@ -41,57 +60,107 @@ class StateTransition:
     conditions: List[Callable[[Dict[str, Any], Dict[str, Any]], bool]]
     priority: int = 0
 
-class StateValidator(BaseModel):
-    """状态验证器基类"""
-    device_type: str
-    rules: Dict[str, Any]
-
-    def validate(self, state: Dict[str, Any]) -> bool:
-        """验证状态
+class StateValidators:
+    """状态验证器"""
+    
+    @staticmethod
+    def validate_power(value: Any) -> bool:
+        """验证电源状态
         
         Args:
-            state: 要验证的状态
+            value: 要验证的值
             
         Returns:
-            bool: 验证是否通过
-            
-        Raises:
-            StateValidationError: 验证失败时抛出
+            bool: 是否有效
         """
-        raise NotImplementedError
+        return isinstance(value, bool)
+        
+    @staticmethod
+    def validate_brightness(value: Any) -> bool:
+        """验证亮度值
+        
+        Args:
+            value: 要验证的值
+            
+        Returns:
+            bool: 是否有效
+        """
+        try:
+            brightness = int(value)
+            return 0 <= brightness <= 100
+        except (TypeError, ValueError):
+            return False
+            
+    @staticmethod
+    def validate_temperature(value: Any) -> bool:
+        """验证温度值
+        
+        Args:
+            value: 要验证的值
+            
+        Returns:
+            bool: 是否有效
+        """
+        try:
+            temp = int(value)
+            return 16 <= temp <= 30
+        except (TypeError, ValueError):
+            return False
+            
+    @staticmethod
+    def validate_mode(value: Any) -> bool:
+        """验证模式值
+        
+        Args:
+            value: 要验证的值
+            
+        Returns:
+            bool: 是否有效
+        """
+        return value in ["auto", "cool", "heat", "dry", "fan"]
+        
+    @staticmethod
+    def validate_position(value: Any) -> bool:
+        """验证位置值
+        
+        Args:
+            value: 要验证的值
+            
+        Returns:
+            bool: 是否有效
+        """
+        try:
+            pos = int(value)
+            return 0 <= pos <= 100
+        except (TypeError, ValueError):
+            return False
 
 class DeviceStateManager:
     """设备状态管理器"""
     
-    def __init__(
-        self,
-        redis_url: str = "redis://localhost",
-        max_history: int = 100,
-        state_ttl: int = 3600
-    ):
-        """初始化设备状态管理器
+    def __init__(self):
+        """初始化状态管理器"""
+        self._states: Dict[str, Dict[str, Any]] = {}
+        self._validators: Dict[str, Callable[[Any], bool]] = {
+            "is_on": StateValidators.validate_power,
+            "brightness": StateValidators.validate_brightness,
+            "temperature": StateValidators.validate_temperature,
+            "mode": StateValidators.validate_mode,
+            "position": StateValidators.validate_position
+        }
+        self._subscribers: Dict[str, List[Callable[[StateChange], None]]] = {}
+        self._lock = asyncio.Lock()
+        
+    async def initialize_state(self, device_id: str, initial_state: Dict[str, Any]) -> None:
+        """初始化设备状态
         
         Args:
-            redis_url: Redis连接URL
-            max_history: 最大历史记录数
-            state_ttl: 状态过期时间（秒）
+            device_id: 设备ID
+            initial_state: 初始状态
         """
-        self.redis = Redis.from_url(redis_url)
-        self.max_history = max_history
-        self.state_ttl = state_ttl
-        self._validators: Dict[str, StateValidator] = {}
-        self._transitions: Dict[str, List[StateTransition]] = {}
-        self._event_callbacks: List[EventCallback] = []
-        
-    async def __aenter__(self):
-        """异步上下文管理器入口"""
-        return self
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器出口"""
-        await self.redis.close()
-        await asyncio.sleep(0.1)  # 等待连接完全关闭
-        
+        async with self._lock:
+            self._states[device_id] = initial_state.copy()
+            
     async def get_state(self, device_id: str) -> Optional[Dict[str, Any]]:
         """获取设备状态
         
@@ -99,298 +168,109 @@ class DeviceStateManager:
             device_id: 设备ID
             
         Returns:
-            Optional[Dict[str, Any]]: 设备状态，如果不存在则返回None
+            Optional[Dict[str, Any]]: 设备状态
         """
-        try:
-            if not self.redis.connection:
-                logger.error("Redis连接已关闭")
-                return None
-                
-            state_json = await self.redis.get(f"device:{device_id}:state")
-            if not state_json:
-                return None
-            return json.loads(state_json)
-        except Exception as e:
-            logger.error(f"获取设备状态失败: {str(e)}")
-            return None
-            
-    async def set_state(
+        return self._states.get(device_id, {}).copy()
+        
+    async def update_state(
         self,
         device_id: str,
-        device_type: str,
-        state: Dict[str, Any],
-        validate: bool = True
+        updates: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """设置设备状态
+        """更新设备状态
         
         Args:
             device_id: 设备ID
-            device_type: 设备类型
-            state: 新状态
-            validate: 是否进行状态验证
+            updates: 状态更新
+            metadata: 元数据
             
         Returns:
-            bool: 是否设置成功
+            bool: 是否更新成功
         """
-        try:
-            # 检查Redis连接
-            if not self.redis.connection:
-                logger.error("Redis连接已关闭")
-                return False
-                
-            # 1. 状态验证
-            if validate and device_type in self._validators:
-                validator = self._validators[device_type]
-                try:
-                    if not validator.validate(state):
-                        await self._notify(
-                            device_id,
-                            DeviceStateEvent.VALIDATION_FAILED,
-                            {"state": state}
-                        )
-                        raise StateValidationError(f"状态验证失败: {device_id}")
-                except StateValidationError as e:
-                    await self._notify(
-                        device_id,
-                        DeviceStateEvent.VALIDATION_FAILED,
-                        {"state": state}
-                    )
-                    raise e
-                await self._notify(
-                    device_id,
-                    DeviceStateEvent.VALIDATED,
-                    {"state": state}
-                )
-                
-            # 2. 获取当前状态
-            current_state = await self.get_state(device_id)
-            
-            # 3. 状态转换检查
-            if current_state and device_type in self._transitions:
-                if not await self._check_transition(
-                    device_type,
-                    current_state,
-                    state
-                ):
-                    await self._notify(
-                        device_id,
-                        DeviceStateEvent.TRANSITION_FAILED,
-                        {
-                            "from_state": current_state,
-                            "to_state": state
-                        }
-                    )
-                    raise StateTransitionError(
-                        f"状态转换失败: {device_id}"
-                    )
-                    
-            # 4. 保存状态
-            state_json = json.dumps(state)
-            try:
-                pipe = self.redis.pipeline()
-                # 设置状态
-                pipe.set(
-                    f"device:{device_id}:state",
-                    state_json,
-                    ex=self.state_ttl
-                )
-                # 添加历史记录
-                history_entry = json.dumps({
-                    "timestamp": datetime.now().isoformat(),
-                    "state": state
-                })
-                pipe.lpush(f"device:{device_id}:history", history_entry)
-                pipe.ltrim(f"device:{device_id}:history", 0, self.max_history - 1)
-                await pipe.execute()
-            except Exception as e:
-                logger.error(f"Redis操作失败: {str(e)}")
-                return False
-            
-            # 5. 通知订阅者
-            try:
-                await self._notify(
-                    device_id,
-                    DeviceStateEvent.UPDATED,
-                    {"state": state}
-                )
-                await self._notify(
-                    device_id,
-                    DeviceStateEvent.HISTORY_ADDED,
-                    {
-                        "timestamp": datetime.now().isoformat(),
-                        "state": state
-                    }
-                )
-            except Exception as e:
-                logger.error(f"通知订阅者失败: {str(e)}")
-                # 即使通知失败，状态设置仍然成功
-                pass
-            
-            return True
-            
-        except (StateValidationError, StateTransitionError) as e:
-            logger.error(f"设置设备状态失败: {str(e)}")
-            raise e
-        except Exception as e:
-            logger.error(f"设置设备状态失败: {str(e)}")
+        if device_id not in self._states:
+            logger.error(f"设备 {device_id} 未初始化状态")
             return False
             
-    async def get_history(
-        self,
-        device_id: str,
-        start: int = 0,
-        end: int = -1
-    ) -> List[Dict[str, Any]]:
-        """获取设备状态历史
-        
-        Args:
-            device_id: 设备ID
-            start: 起始位置
-            end: 结束位置
-            
-        Returns:
-            List[Dict[str, Any]]: 历史记录列表
-        """
         try:
-            history = await self.redis.lrange(
-                f"device:{device_id}:history",
-                start,
-                end
-            )
-            return [json.loads(entry) for entry in history]
+            async with self._lock:
+                current_state = self._states[device_id]
+                
+                # 验证并应用更新
+                for key, new_value in updates.items():
+                    if key in self._validators:
+                        if not self._validators[key](new_value):
+                            raise ValueError(f"无效的{key}值: {new_value}")
+                            
+                        old_value = current_state.get(key)
+                        if old_value != new_value:
+                            current_state[key] = new_value
+                            
+                            # 创建状态变更事件
+                            change = StateChange(
+                                type=StateChangeType[key.upper()],
+                                device_id=device_id,
+                                old_value=old_value,
+                                new_value=new_value,
+                                timestamp=asyncio.get_event_loop().time(),
+                                metadata=metadata
+                            )
+                            
+                            # 通知订阅者
+                            await self._notify_subscribers(device_id, change)
+                
+                return True
+                
         except Exception as e:
-            logger.error(f"获取设备状态历史失败: {str(e)}")
-            return []
+            logger.error(f"更新设备 {device_id} 状态失败: {str(e)}")
+            return False
             
-    def register_validator(
-        self,
-        device_type: str,
-        validator: StateValidator
-    ) -> None:
-        """注册状态验证器
-        
-        Args:
-            device_type: 设备类型
-            validator: 验证器实例
-        """
-        self._validators[device_type] = validator
-        
-    def register_transition(
-        self,
-        device_type: str,
-        transition: StateTransition
-    ) -> None:
-        """注册状态转换规则
-        
-        Args:
-            device_type: 设备类型
-            transition: 转换规则
-        """
-        if device_type not in self._transitions:
-            self._transitions[device_type] = []
-        self._transitions[device_type].append(transition)
-        # 按优先级排序
-        self._transitions[device_type].sort(
-            key=lambda x: x.priority,
-            reverse=True
-        )
-        
     def subscribe(
         self,
         device_id: str,
-        callback: Callable[[str, DeviceStateEvent, Dict[str, Any]], None]
+        callback: Callable[[StateChange], None]
     ) -> None:
-        """订阅设备状态事件
+        """订阅状态变更
         
         Args:
             device_id: 设备ID
             callback: 回调函数
         """
-        if device_id not in self._event_callbacks:
-            self._event_callbacks.append((device_id, callback))
+        if device_id not in self._subscribers:
+            self._subscribers[device_id] = []
+        self._subscribers[device_id].append(callback)
         
     def unsubscribe(
         self,
         device_id: str,
-        callback: Callable[[str, DeviceStateEvent, Dict[str, Any]], None]
+        callback: Callable[[StateChange], None]
     ) -> None:
-        """取消订阅设备状态事件
+        """取消订阅状态变更
         
         Args:
             device_id: 设备ID
             callback: 回调函数
         """
-        if device_id in self._event_callbacks:
-            try:
-                self._event_callbacks.remove((device_id, callback))
-            except ValueError:
-                pass
-                
-    async def _check_transition(
-        self,
-        device_type: str,
-        from_state: Dict[str, Any],
-        to_state: Dict[str, Any]
-    ) -> bool:
-        """检查状态转换是否合法
-        
-        Args:
-            device_type: 设备类型
-            from_state: 当前状态
-            to_state: 目标状态
+        if device_id in self._subscribers:
+            self._subscribers[device_id].remove(callback)
             
-        Returns:
-            bool: 转换是否合法
-        """
-        if device_type not in self._transitions:
-            return True
-            
-        for transition in self._transitions[device_type]:
-            # 检查状态匹配
-            if not all(
-                from_state.get(k) == v
-                for k, v in transition.from_state.items()
-            ):
-                continue
-                
-            if not all(
-                to_state.get(k) == v
-                for k, v in transition.to_state.items()
-            ):
-                continue
-                
-            # 检查转换条件
-            if all(
-                condition(from_state, to_state)
-                for condition in transition.conditions
-            ):
-                return True
-                
-        return False
-        
-    async def _notify(
+    async def _notify_subscribers(
         self,
         device_id: str,
-        event: DeviceStateEvent,
-        data: Dict[str, Any]
+        change: StateChange
     ) -> None:
         """通知订阅者
         
         Args:
             device_id: 设备ID
-            event: 事件类型
-            data: 事件数据
+            change: 状态变更
         """
-        if device_id not in self._event_callbacks:
-            return
-            
-        for callback in self._event_callbacks:
-            try:
-                await asyncio.create_task(
-                    callback(device_id, event, data)
-                )
-            except Exception as e:
-                logger.error(f"状态事件回调执行失败: {str(e)}")
+        if device_id in self._subscribers:
+            for callback in self._subscribers[device_id]:
+                try:
+                    callback(change)
+                except Exception as e:
+                    logger.error(f"调用状态变更回调失败: {str(e)}")
 
 # 全局状态管理器实例
 state_manager = DeviceStateManager() 

@@ -3,7 +3,11 @@ import wave
 import numpy as np
 import asyncio
 from dataclasses import dataclass
-from typing import Optional, AsyncIterator
+from typing import Optional, AsyncIterator, Callable
+from queue import Queue
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class AudioConfig:
@@ -41,43 +45,47 @@ class AudioRecorder:
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.frames = []
+        self._is_recording = False
+        self._queue = Queue()
         
-    def start_recording(self):
-        """启动录音流"""
+    async def start(self):
+        """启动录音"""
         if self.stream is None:
             self.stream = self.p.open(
                 format=self.p.get_format_from_width(self.config.sample_width),
                 channels=self.config.channels,
                 rate=self.config.sample_rate,
                 input=True,
-                frames_per_buffer=self.config.chunk_size
+                frames_per_buffer=self.config.chunk_size,
+                stream_callback=self._audio_callback
             )
-            self.frames = []
+            self._is_recording = True
+            self.stream.start_stream()
             
-    def stop_recording(self):
-        """停止录音流"""
-        if self.stream is not None:
+    async def stop(self):
+        """停止录音"""
+        self._is_recording = False
+        if self.stream:
             self.stream.stop_stream()
             self.stream.close()
             self.stream = None
             
-    async def record_chunk(self) -> bytes:
-        """录制一个音频块"""
-        if self.stream is None:
-            self.start_recording()
-        chunk = self.stream.read(self.config.chunk_size, exception_on_overflow=False)
-        self.frames.append(chunk)
-        return chunk
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """音频回调函数,在非事件循环线程中运行"""
+        if self._is_recording:
+            self._queue.put(in_data)
+        return (None, pyaudio.paContinue)
         
-    async def record_stream(self) -> AsyncIterator[bytes]:
-        """录制音频流"""
+    async def read(self) -> Optional[bytes]:
+        """读取音频数据
+        
+        Returns:
+            Optional[bytes]: 音频数据
+        """
         try:
-            self.start_recording()
-            while True:
-                chunk = await self.record_chunk()
-                yield chunk
-        finally:
-            self.stop_recording()
+            return self._queue.get_nowait()
+        except:
+            return None
             
     def save_to_file(self, filename: str):
         """保存录音到文件"""
@@ -91,6 +99,9 @@ class AudioRecorder:
             wf.writeframes(b''.join(self.frames))
             
     def __del__(self):
-        """清理资源"""
-        self.stop_recording()
-        self.p.terminate() 
+        """析构函数"""
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        if self.p:
+            self.p.terminate() 

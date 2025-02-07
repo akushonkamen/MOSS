@@ -1,128 +1,125 @@
-# Moss - 智能语音助手
+# MOSS - 工业智能体系统
 
-Moss是一个基于Python的智能语音助手系统，集成了语音识别、大语言模型和语音合成功能。
+## 项目概述
 
-## 功能特点
+MOSS (Manufacturing Operations Smart System) 是一个基于Python的工业智能体系统，专为制造业数字化转型设计。系统采用先进的多智能体架构，集成大语言模型与专家系统，实现工业设备的智能控制、预测性维护和生产优化。
 
-1. 语音识别
-   - 使用Whisper large模型
-   - 支持实时语音输入
-   - 高准确度的中文识别
+## 核心特性
 
-2. 大语言模型
-   - 使用llama3.1:latest模型
-   - 支持上下文对话
-   - 流式输出响应
+### 1. 多智能体协同系统
+- 解码智能体：理解自然语言指令和工业现场需求
+- 专家智能体：基于领域知识生成控制策略
+- 记忆智能体：存储和检索历史运行数据
+- 学习智能体：持续优化控制策略
 
-3. 语音合成
-   - 使用Edge TTS
-   - 自然流畅的中文语音
-   - 实时语音反馈
+### 2. 工业设备管理
+- 支持多种工业协议（ModbusTCP、OPC UA、Profinet）
+- 实时数据采集与监控
+- 设备状态预测与健康管理
+- 智能报警和故障诊断
 
-## 系统要求
+### 3. 生产优化
+- 生产计划智能排程
+- 能源消耗优化
+- 质量控制与追溯
+- 设备利用率优化
 
+### 4. 安全机制
+- 多层级访问控制
+- 操作审计日志
+- 数据加密传输
+- 应急处理机制
+
+## 技术架构
+
+### 1. 核心服务
+- LLM服务：基于大语言模型的指令理解和决策生成
+- 设备控制服务：工业设备实时控制和状态监控
+- 数据分析服务：生产数据分析和预测建模
+- 优化调度服务：生产计划智能排程
+
+### 2. 通信机制
+- 工业以太网
+- OPC UA
+- MQTT
+- WebSocket
+
+## 应用场景
+
+### 1. 智能制造
+- 柔性生产线控制
+- 工艺参数优化
+- 质量预测与控制
+- 设备预测性维护
+
+### 2. 过程工业
+- 连续生产过程控制
+- 工艺参数优化
+- 能源管理
+- 安全监控
+
+### 3. 离散制造
+- 生产计划排程
+- 设备利用率优化
+- 物料配送优化
+- 质量追溯
+
+## 部署要求
+
+### 1. 硬件要求
+- CPU: Intel Xeon E5 或更高
+- 内存: 32GB+
+- 存储: 1TB+ SSD
+- 网络: 工业以太网
+
+### 2. 软件要求
+- OS: Ubuntu 20.04 LTS
 - Python 3.10+
-- 操作系统：macOS/Linux/Windows
-- 麦克风设备
-- 音频输出设备
+- Redis 6.0+
+- PostgreSQL 13+
 
-## 安装
+## 快速开始
 
-1. 克隆仓库：
+1. 克隆仓库
 ```bash
-git clone https://github.com/yourusername/Moss.git
-cd Moss
+git clone https://github.com/yourusername/moss.git
+cd moss
 ```
 
-2. 创建并激活虚拟环境：
-```bash
-conda create -n moss python=3.10
-conda activate moss
-```
-
-3. 安装依赖：
+2. 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-## 使用方法
+3. 配置环境
+```bash
+cp config.example.yaml config.yaml
+# 编辑 config.yaml 设置您的环境参数
+```
 
-1. 启动所有服务：
+4. 启动服务
 ```bash
 python src/start_services.py
 ```
 
-2. 或者分别启动各个服务：
+## 开发指南
 
-启动设备服务：
-```bash
-python src/start_device_service.py
-```
-
-启动语音服务：
-```bash
-python src/start_voice_service.py
-```
-
-3. 使用方式：
-   - 直接对着麦克风说话
-   - 支持的语音命令示例：
-     - "打开客厅的灯"
-     - "把空调温度调到26度"
-     - "关闭所有设备"
-   - 按Ctrl+C退出程序
-
-## 项目结构
-
-```
-Moss/
-├── src/
-│   ├── core/              # 核心配置
-│   ├── services/          # 服务模块
-│   │   ├── llm/          # 大语言模型服务
-│   │   ├── audio/        # 音频服务
-│   │   │   ├── recorder/ # 录音服务
-│   │   │   └── player/   # 播放服务
-│   │   ├── devices/      # 设备控制服务
-│   │   └── tts/         # 语音合成服务
-│   ├── start_services.py  # 主服务启动脚本
-│   ├── start_voice_service.py  # 语音服务启动脚本
-│   └── start_device_service.py # 设备服务启动脚本
-├── README.md
-└── requirements.txt
-```
-
-## 设备支持
-
-当前支持的智能设备：
-
-1. 智能灯光 (SmartLight)
-   - 开关控制
-   - 亮度调节 (0-100%)
-
-2. 智能空调 (SmartAC)
-   - 开关控制
-   - 温度调节 (16-30°C)
-   - 模式切换 (自动/制冷/制热/除湿/送风)
-
-3. 智能窗帘 (SmartCurtain)
-   - 开关控制
-   - 位置调节 (0-100%)
-
-## 开发计划
-
-- [x] 支持语音控制
-- [x] 集成大语言模型
-- [x] 添加设备控制功能
-- [ ] 支持更多设备类型
-- [ ] 添加图形用户界面
-- [ ] 优化对话上下文管理
-- [ ] 添加更多语音定制选项
-
-## 贡献
-
-欢迎提交Issue和Pull Request！
+详细的开发文档请参考 `docs/` 目录：
+- [架构设计](docs/development/architecture.md)
+- [开发规范](docs/development/guidelines.md)
+- [API文档](docs/api/README.md)
+- [部署指南](docs/deployment/README.md)
 
 ## 许可证
 
-MIT License
+本项目采用 Apache 2.0 许可证。详见 [LICENSE](LICENSE) 文件。
+
+## 贡献指南
+
+我们欢迎任何形式的贡献，包括但不限于：
+- 提交问题和建议
+- 改进文档
+- 提交代码改进
+- 分享使用经验
+
+请参考 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详细的贡献指南。

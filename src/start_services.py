@@ -6,11 +6,10 @@ import signal
 from typing import Dict, Any, List, Optional
 from loguru import logger
 from tabulate import tabulate
+import logging
 
 # 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-sys.path.append(project_root)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.services.audio.voice_interaction import VoiceInteractionManager, VoiceConfig
 from src.services.audio.recorder_service import AudioConfig as RecorderConfig
@@ -27,13 +26,24 @@ from src.services.devices.curtain_entity import CurtainEntity
 from src.services.function_calling.parser import FunctionParser
 from src.services.function_calling.registry import FunctionDefinition
 from src.services.devices.device_info import DeviceInfo, DeviceParameter
+from src.services.devices.device_manager import DeviceManager
+from src.services.llm.decoderAgent import DecoderAgent
+from src.services.llm.expertAgent import ExpertAgent
+from src.services.devices.device_discovery import DeviceDiscoveryService
+from src.services.devices.smart_light import SmartLightClient
+from src.services.devices.smart_ac import SmartACClient
+from src.services.devices.smart_curtain import SmartCurtainClient
 
 class ServiceManager:
     """服务管理器"""
     
     def __init__(self):
         """初始化服务管理器"""
-        self.voice_manager: Optional[VoiceInteractionManager] = None
+        self.device_manager = DeviceManager()
+        self.decoder = None
+        self.expert = None
+        self.voice_manager = None
+        self.logger = logging.getLogger(__name__)
         self.llm_service = llm_service()
         self.is_running = False
         
@@ -82,98 +92,105 @@ class ServiceManager:
         )
         
     async def register_devices(self) -> List[DeviceInfo]:
-        """注册设备
+        """注册所有设备
         
         Returns:
-            List[DeviceInfo]: 设备列表
+            List[DeviceInfo]: 设备信息列表
         """
-        # 创建设备客户端
-        devices = [
-            SmartLightClient("light.001", "客厅灯", 8001),
-            SmartLightClient("light.002", "卧室灯", 8002),
-            SmartACClient("ac.001", "客厅空调", 8003),
-            SmartCurtainClient("curtain.001", "卧室窗帘", 8004)
-        ]
-        
-        # 获取设备状态
         device_infos = []
-        for device in devices:
-            try:
-                status = await device.get_status()
-                logger.info(f"设备 {device.name} 类型: {device.__class__.__name__}")
-                logger.info(f"{device.name}状态: {status}")
-                
-                # 构造设备信息
-                parameters = {}
-                if isinstance(device, SmartLightClient):
-                    parameters = {
-                        "power": DeviceParameter(
-                            type="boolean",
-                            description="电源开关状态",
-                            current_value=status["is_on"]
-                        ),
-                        "brightness": DeviceParameter(
-                            type="integer",
-                            description="亮度值",
-                            current_value=status["brightness"],
-                            min_value=0,
-                            max_value=100,
-                            unit="%"
-                        )
-                    }
-                elif isinstance(device, SmartACClient):
-                    parameters = {
-                        "power": DeviceParameter(
-                            type="boolean",
-                            description="电源开关状态",
-                            current_value=status["is_on"]
-                        ),
-                        "temperature": DeviceParameter(
-                            type="integer",
-                            description="温度值",
-                            current_value=status["temperature"],
-                            min_value=16,
-                            max_value=30,
-                            unit="°C"
-                        ),
-                        "mode": DeviceParameter(
-                            type="string",
-                            description="运行模式",
-                            current_value=status["mode"],
-                            enum_values=["auto", "cool", "heat", "dry", "fan"]
-                        )
-                    }
-                elif isinstance(device, SmartCurtainClient):
-                    parameters = {
-                        "power": DeviceParameter(
-                            type="boolean",
-                            description="电源开关状态",
-                            current_value=status["is_open"]
-                        ),
-                        "position": DeviceParameter(
-                            type="integer",
-                            description="位置值",
-                            current_value=status["position"],
-                            min_value=0,
-                            max_value=100,
-                            unit="%"
-                        )
-                    }
+        
+        try:
+            # 获取所有设备
+            devices = await self.device_manager.get_all_devices()
+            
+            for device in devices:
+                try:
+                    # 获取设备类型
+                    device_type = device.__class__.__name__.replace("Client", "")
+                    self.logger.info(f"设备 {device.name} 类型: {device_type}")
                     
-                device_info = DeviceInfo(
-                    id=device.device_id,
-                    name=device.name,
-                    type=device.__class__.__name__.replace("Client", ""),
-                    location="",
-                    capabilities=[],
-                    parameters=parameters
-                )
-                device_infos.append(device_info)
-                
-            except Exception as e:
-                logger.error(f"获取设备 {device.name} 状态失败: {str(e)}")
-                
-        return device_infos
+                    # 获取设备状态
+                    device_state = await device.get_state()
+                    self.logger.info(f"{device.name}状态: {device_state}")
+                    
+                    # 构建设备参数
+                    parameters = {}
+                    
+                    # 根据设备类型构建参数
+                    if isinstance(device, SmartLightClient):
+                        parameters = {
+                            "power": DeviceParameter(
+                                type="boolean",
+                                description="电源状态",
+                                current_value=device_state.get("is_on", False)
+                            ),
+                            "brightness": DeviceParameter(
+                                type="integer",
+                                description="亮度",
+                                current_value=device_state.get("brightness", 0),
+                                min_value=0,
+                                max_value=100,
+                                unit="%"
+                            )
+                        }
+                    elif isinstance(device, SmartACClient):
+                        parameters = {
+                            "power": DeviceParameter(
+                                type="boolean",
+                                description="电源状态",
+                                current_value=device_state.get("is_on", False)
+                            ),
+                            "temperature": DeviceParameter(
+                                type="integer",
+                                description="温度",
+                                current_value=device_state.get("temperature", 25),
+                                min_value=16,
+                                max_value=30,
+                                unit="°C"
+                            ),
+                            "mode": DeviceParameter(
+                                type="string",
+                                description="运行模式",
+                                current_value=device_state.get("mode", "auto"),
+                                enum_values=["auto", "cool", "heat", "dry", "fan"]
+                            )
+                        }
+                    elif isinstance(device, SmartCurtainClient):
+                        parameters = {
+                            "power": DeviceParameter(
+                                type="boolean",
+                                description="电源状态",
+                                current_value=device_state.get("is_open", False)
+                            ),
+                            "position": DeviceParameter(
+                                type="integer",
+                                description="位置",
+                                current_value=device_state.get("position", 0),
+                                min_value=0,
+                                max_value=100,
+                                unit="%"
+                            )
+                        }
+                    
+                    # 创建设备信息对象
+                    device_info = DeviceInfo(
+                        id=device.device_id,
+                        name=device.name,
+                        type=device_type,  # 使用处理后的设备类型
+                        location="",
+                        capabilities=[],
+                        parameters=parameters
+                    )
+                    device_infos.append(device_info)
+                    
+                except Exception as e:
+                    self.logger.error(f"获取设备 {device.name} 状态失败: {str(e)}")
+                    
+            return device_infos
+            
+        except Exception as e:
+            self.logger.error(f"注册设备失败: {str(e)}")
+            return []
         
     async def register_functions(self):
         """注册控制函数"""
@@ -282,75 +299,63 @@ class ServiceManager:
         Args:
             devices: 设备列表
         """
-        # 获取设备状态
+        # 准备表格数据
         table_data = []
-        headers = ["设备名称", "状态", "详细信息"]
-        
         for device in devices:
-            try:
-                # 构造状态信息
-                if device.type == "SmartLight":
-                    name = "🔌 " + device.name
-                    is_on = device.parameters["power"].current_value
-                    brightness = device.parameters["brightness"].current_value
-                    status = "🟢 开启" if is_on else "⚫️ 关闭"
-                    details = f"💡 亮度: {brightness}%"
-                elif device.type == "SmartAC":
-                    name = "🎛️ " + device.name
-                    is_on = device.parameters["power"].current_value
-                    temperature = device.parameters["temperature"].current_value
-                    mode = device.parameters["mode"].current_value
-                    status = "🟢 开启" if is_on else "⚫️ 关闭"
-                    mode_icons = {
-                        "cool": "❄️",
-                        "heat": "🔥",
-                        "auto": "🔄"
-                    }
-                    mode_icon = mode_icons.get(mode, "")
-                    details = f"🌡️ 温度: {temperature}°C, {mode_icon} 模式: {mode}"
-                elif device.type == "SmartCurtain":
-                    name = "🪟 " + device.name
-                    is_open = device.parameters["power"].current_value
-                    position = device.parameters["position"].current_value
-                    status = "🟢 开启" if is_open else "⚫️ 关闭"
-                    details = f"📏 位置: {position}%"
-                else:
-                    continue
-                    
-                table_data.append([name, status, details])
-                
-            except Exception as e:
-                logger.error(f"获取设备 {device.name} 状态失败: {str(e)}")
-                table_data.append([f"❌ {device.name}", "错误", str(e)])
-                
+            # 获取设备图标
+            icon = self.get_device_icon(device.type)
+            
+            # 获取设备名称
+            name = f"{icon} {device.name}"
+            
+            # 获取设备状态
+            power = device.parameters.get("power")
+            if power:
+                status = "🟢 开启" if power.current_value else "⚫️ 关闭"
+            else:
+                status = "❓ 未知"
+            
+            # 获取详细信息
+            details = []
+            if "brightness" in device.parameters:
+                brightness = device.parameters["brightness"]
+                details.append(f"💡 亮度: {brightness.current_value}%")
+            if "temperature" in device.parameters:
+                temperature = device.parameters["temperature"]
+                mode = device.parameters["mode"]
+                details.append(f"🌡️ 温度: {temperature.current_value}°C")
+                details.append(f"❄️ 模式: {mode.current_value}")
+            if "position" in device.parameters:
+                position = device.parameters["position"]
+                details.append(f"📏 位置: {position.current_value}%")
+            
+            # 添加到表格数据
+            table_data.append([name, status, ", ".join(details)])
+        
         logger.debug(f"表格数据: {table_data}")
         
-        # 打印状态表格
+        # 打印表格
         print("\n当前设备状态:")
-        print("=" * 80)
+        print("="*80)
+        headers = ["设备名称", "状态", "详细信息"]
+        print(tabulate(table_data, headers=headers, tablefmt="simple"))
+        print("="*80)
+
+    def get_device_icon(self, device_type: str) -> str:
+        """获取设备图标
         
-        if not table_data:
-            print("暂无设备状态信息")
-            logger.warning("没有设备状态数据被添加到表格中")
-        else:
-            try:
-                # 使用简单的表格格式，避免特殊字符问题
-                table = tabulate(
-                    table_data,
-                    headers=headers,
-                    tablefmt="simple",
-                    stralign="left"
-                )
-                print(table)
-            except Exception as e:
-                logger.error(f"格式化设备状态表格失败: {str(e)}")
-                # 使用最简单的格式打印
-                print(f"{headers[0]:<30} {headers[1]:<15} {headers[2]}")
-                print("-" * 80)
-                for row in table_data:
-                    print(f"{row[0]:<30} {row[1]:<15} {row[2]}")
-        
-        print("=" * 80)
+        Args:
+            device_type: 设备类型
+            
+        Returns:
+            str: 设备图标
+        """
+        icons = {
+            "SmartLight": "🔌",
+            "SmartAC": "🎛️",
+            "SmartCurtain": "🪟"
+        }
+        return icons.get(device_type, "❓")
         
     async def on_transcribe(self, text: str):
         """语音识别回调"""
@@ -389,49 +394,88 @@ class ServiceManager:
     async def start(self):
         """启动所有服务"""
         try:
-            logger.info("正在启动所有服务...")
+            self.logger.info("正在启动所有服务...")
             
             # 初始化LLM服务
-            await self.llm_service.initialize()
+            self.decoder = DecoderAgent(
+                api_url="http://localhost:11434/api/chat",
+                model_name="llama3.1:latest"
+            )
+            await self.decoder.initialize()
+            
+            self.expert = ExpertAgent(
+                agent_id="expert_001",
+                api_url="http://localhost:11434/api/chat",
+                model_name="llama3.1:latest"
+            )
+            await self.expert.initialize()
+            
+            # 初始化设备管理器
+            await self.device_manager.initialize()
             
             # 注册设备
             devices = await self.register_devices()
-            logger.info(f"获取到的设备列表: {[f'{d.name} ({d.type})' for d in devices]}")
+            self.logger.info(f"获取到的设备列表: {[f'{d.name} ({d.type})' for d in devices]}")
             
-            # 注册函数
+            # 注册设备控制函数
             await self.register_functions()
-            logger.info("设备控制函数注册完成")
+            self.logger.info("设备控制函数注册完成")
             
-            # 初始化并启动语音服务
-            await self.init_voice_service()
+            # 初始化语音配置
+            frame_duration = 0.03  # 30ms
+            sample_rate = 16000
+            chunk_size = int(sample_rate * frame_duration)
             
-            # 打印当前设备状态
+            config = VoiceConfig(
+                recorder_config=RecorderConfig(
+                    channels=1,
+                    sample_rate=sample_rate,
+                    sample_width=2,
+                    chunk_size=chunk_size
+                ),
+                player_config=PlayerConfig(
+                    channels=1,
+                    sample_rate=sample_rate,
+                    sample_width=2,
+                    chunk_size=chunk_size
+                ),
+                vad_aggressiveness=3,
+                silence_duration=1.0,
+                min_audio_length=0.5,
+                whisper_model="large",
+                whisper_language="zh"
+            )
+            
+            # 初始化语音交互管理器
+            self.voice_manager = VoiceInteractionManager(
+                config=config,
+                on_transcribe=self.on_transcribe,
+                on_speech_start=self.on_speech_start,
+                on_speech_end=self.on_speech_end
+            )
+            await self.voice_manager.initialize()
+            
+            # 打印设备状态
             await self.print_device_status(devices)
             
-            # 播放欢迎语
-            logger.info("启动语音助手...")
-            await self.voice_manager.speak("所有服务已启动完成，请说话")
+            # 启动语音助手
+            self.logger.info("启动语音助手...")
+            await self.voice_manager.start()
             
-            # 启动语音交互
-            self.voice_manager.start()
+            # 保持主循环运行
             self.is_running = True
-            
-            # 注册信号处理
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, self._signal_handler)
-                
             try:
-                # 保持运行直到收到退出信号
                 while self.is_running:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1)
             except KeyboardInterrupt:
-                logger.info("检测到退出信号")
-            finally:
+                self.logger.info("收到退出信号")
+                self.is_running = False
                 await self.stop()
-                
+            
         except Exception as e:
-            logger.error(f"启动服务时出错: {str(e)}")
+            self.logger.error(f"启动服务时出错: {str(e)}")
             print(f"启动服务时出错: {str(e)}")
+            raise
             
     def _signal_handler(self, signum, frame):
         """信号处理器"""

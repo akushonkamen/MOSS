@@ -1,6 +1,7 @@
 """设备信息类"""
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
+from .function_definitions import get_device_functions
 
 @dataclass
 class DeviceParameter:
@@ -55,4 +56,12 @@ class DeviceInfo:
                 name: param.to_dict()
                 for name, param in self.parameters.items()
             }
-        } 
+        }
+        
+    def get_functions(self) -> List[Dict[str, Any]]:
+        """获取设备可用的控制函数
+        
+        Returns:
+            List[Dict[str, Any]]: 函数列表
+        """
+        return get_device_functions(self.type) 

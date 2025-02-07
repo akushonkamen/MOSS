@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 import logging
 from enum import Enum
+from .state_manager import state_manager, StateChange
 
 logger = logging.getLogger(__name__)
 
@@ -70,104 +71,131 @@ class Device(ABC):
         delay = (max_delay - min_delay) * 0.5 + min_delay
         await asyncio.sleep(delay)
         
-class DeviceClient:
-    """设备客户端基类"""
+class DeviceClient(ABC):
+    """基础设备客户端"""
     
-    def __init__(self, device_id: str):
+    def __init__(self, device_id: str, name: str, port: int):
         """初始化设备客户端
         
         Args:
             device_id: 设备ID
+            name: 设备名称
+            port: 设备端口
         """
         self.device_id = device_id
-        self.state: Dict[str, Any] = {}
-        self.last_update: Optional[datetime] = None
-        self.update_interval = timedelta(seconds=5)  # 状态更新间隔
-        self.retry_count = 3  # 重试次数
-        self.retry_delay = 1  # 重试延迟(秒)
+        self.name = name
+        self.port = port
+        self.logger = logging.getLogger(__name__)
         
-    async def _make_request(self, method: str, **kwargs) -> Dict[str, Any]:
-        """发送请求
-        
-        Args:
-            method: 请求方法
-            **kwargs: 请求参数
+    async def initialize(self):
+        """初始化设备"""
+        try:
+            # 初始化设备状态
+            initial_state = await self.get_initial_state()
+            await state_manager.initialize_state(self.device_id, initial_state)
             
+            # 订阅状态变更
+            state_manager.subscribe(self.device_id, self._on_state_change)
+            
+            self.logger.info(f"设备 {self.name} 初始化完成")
+            
+        except Exception as e:
+            self.logger.error(f"设备 {self.name} 初始化失败: {str(e)}")
+            raise
+            
+    @abstractmethod
+    async def get_initial_state(self) -> Dict[str, Any]:
+        """获取初始状态
+        
         Returns:
-            Dict[str, Any]: 响应数据
-            
-        Raises:
-            DeviceError: 设备操作异常
+            Dict[str, Any]: 初始状态
         """
-        raise NotImplementedError
-                
-    async def get_status(self) -> Dict[str, Any]:
+        pass
+        
+    async def get_state(self) -> Dict[str, Any]:
         """获取设备状态
         
         Returns:
             Dict[str, Any]: 设备状态
-            
-        Raises:
-            DeviceError: 设备操作异常
         """
-        try:
-            # 检查缓存是否有效
-            now = datetime.now()
-            if (self.last_update and 
-                now - self.last_update < self.update_interval):
-                return self.state
-                
-            # 获取最新状态
-            status = await self._make_request("get_status")
-            self.state = status
-            self.last_update = now
-            return status
-        except Exception as e:
-            raise DeviceError(f"获取设备状态失败: {str(e)}")
+        return await state_manager.get_state(self.device_id)
         
-    async def update_state(self, state: Dict[str, Any]) -> bool:
-        """更新设备状态
+    async def set_state(self, state: Dict[str, Any]) -> bool:
+        """设置设备状态
         
         Args:
-            state: 新状态
+            state: 设备状态
             
         Returns:
-            bool: 是否更新成功
-            
-        Raises:
-            DeviceError: 设备操作异常
+            bool: 是否设置成功
         """
-        try:
-            result = await self._make_request("update_state", state=state)
-            return result.get("success", False)
-        except Exception as e:
-            raise DeviceError(f"更新设备状态失败: {str(e)}")
-            
-    async def execute_command(self, command: str, **params) -> bool:
-        """执行设备命令
+        return await state_manager.update_state(self.device_id, state)
+        
+    async def set_power(self, power: bool) -> bool:
+        """设置电源状态
         
         Args:
-            command: 命令名称
-            **params: 命令参数
+            power: 电源状态
             
         Returns:
-            bool: 是否执行成功
-            
-        Raises:
-            DeviceError: 设备操作异常
+            bool: 是否设置成功
         """
-        try:
-            result = await self._make_request(
-                "execute", 
-                command=command,
-                params=params
-            )
-            if result.get("success"):
-                # 命令执行成功后立即更新状态
-                await self.get_status()
-            return result.get("success", False)
-        except Exception as e:
-            raise DeviceError(f"执行设备命令失败: {str(e)}")
+        return await self.set_state({"is_on": power})
+        
+    async def set_brightness(self, brightness: int) -> bool:
+        """设置亮度
+        
+        Args:
+            brightness: 亮度值
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        return await self.set_state({"brightness": brightness})
+        
+    async def set_temperature(self, temperature: int) -> bool:
+        """设置温度
+        
+        Args:
+            temperature: 温度值
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        return await self.set_state({"temperature": temperature})
+        
+    async def set_mode(self, mode: str) -> bool:
+        """设置模式
+        
+        Args:
+            mode: 运行模式
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        return await self.set_state({"mode": mode})
+        
+    async def set_position(self, position: int) -> bool:
+        """设置位置
+        
+        Args:
+            position: 位置值
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        return await self.set_state({"position": position})
+        
+    def _on_state_change(self, change: StateChange) -> None:
+        """状态变更回调
+        
+        Args:
+            change: 状态变更
+        """
+        self.logger.info(
+            f"设备 {self.name} 状态变更: "
+            f"{change.type.value} 从 {change.old_value} 变为 {change.new_value}"
+        )
 
 class DeviceRegistry:
     """设备注册表"""

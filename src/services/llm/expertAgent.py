@@ -9,6 +9,7 @@ from src.services.devices.device_info import DeviceInfo
 from .intent import DeviceIntent, IntentParameter, IntentType
 from ..agents import BaseAgent, AgentType, AgentStatus, AgentCapability, AgentMetrics
 from datetime import datetime
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +63,24 @@ class ExpertAgent(BaseAgent):
                     name="action_generation",
                     description="Generate device control actions based on user intent",
                     parameters={
-                        "intent": "User intent data",
-                        "device": "Device information"
+                        "intent": {
+                            "type": "object",
+                            "description": "User intent data"
+                        },
+                        "device": {
+                            "type": "object",
+                            "description": "Device information"
+                        },
+                        "output_actions": {
+                            "type": "array",
+                            "description": "List of control actions"
+                        },
+                        "output_response": {
+                            "type": "object",
+                            "description": "Response information"
+                        }
                     },
-                    returns={
-                        "actions": "List of control actions",
-                        "response": "Response information"
-                    }
+                    version="1.0.0"
                 )
             )
             
@@ -78,14 +90,28 @@ class ExpertAgent(BaseAgent):
                     name="device_control",
                     description="Control devices with specific commands",
                     parameters={
-                        "device_id": "Target device ID",
-                        "command": "Control command",
-                        "parameters": "Command parameters"
+                        "device_id": {
+                            "type": "string",
+                            "description": "Target device ID"
+                        },
+                        "command": {
+                            "type": "string",
+                            "description": "Control command"
+                        },
+                        "command_parameters": {
+                            "type": "object",
+                            "description": "Command parameters"
+                        },
+                        "output_success": {
+                            "type": "boolean",
+                            "description": "Whether the control was successful"
+                        },
+                        "output_message": {
+                            "type": "string",
+                            "description": "Control result message"
+                        }
                     },
-                    returns={
-                        "success": "Whether the control was successful",
-                        "message": "Control result message"
-                    }
+                    version="1.0.0"
                 )
             )
             
@@ -95,22 +121,32 @@ class ExpertAgent(BaseAgent):
                     name="scene_control",
                     description="Control multiple devices in a scene",
                     parameters={
-                        "scene_id": "Target scene ID",
-                        "actions": "List of scene actions"
+                        "scene_id": {
+                            "type": "string",
+                            "description": "Target scene ID"
+                        },
+                        "scene_actions": {
+                            "type": "array",
+                            "description": "List of scene actions"
+                        },
+                        "output_success": {
+                            "type": "boolean",
+                            "description": "Whether the scene control was successful"
+                        },
+                        "output_message": {
+                            "type": "string",
+                            "description": "Scene control result message"
+                        }
                     },
-                    returns={
-                        "success": "Whether the scene control was successful",
-                        "message": "Scene control result message"
-                    }
+                    version="1.0.0"
                 )
             )
             
-            self.logger.info("Base capabilities registered successfully")
-            return True
+            self.logger.info(f"Expert agent {self.id} registered base capabilities successfully")
             
         except Exception as e:
             self.logger.error(f"Failed to register base capabilities: {str(e)}")
-            return False
+            raise
         
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理输入数据
@@ -270,9 +306,6 @@ class ExpertAgent(BaseAgent):
         Returns:
             str: 提示词
         """
-        # 获取设备可用的控制函数
-        functions = self._get_device_functions(device)
-        
         # 构建设备信息字符串，将 DeviceParameter 对象转换为字典
         parameters = {}
         for name, param in device.parameters.items():
@@ -290,6 +323,13 @@ class ExpertAgent(BaseAgent):
             if hasattr(param, "enum_values") and param.enum_values is not None:
                 parameters[name]["enum_values"] = param.enum_values
                 
+        self.logger.debug(f"设备类型: {device.type}")
+        self.logger.debug(f"设备参数: {parameters}")
+        
+        # 获取设备函数定义
+        functions = device.get_functions()
+        self.logger.debug(f"设备函数: {functions}")
+        
         device_info = {
             "id": device.id,
             "name": device.name,
@@ -297,6 +337,8 @@ class ExpertAgent(BaseAgent):
             "parameters": parameters,
             "functions": functions
         }
+        
+        self.logger.debug(f"完整设备信息: {json.dumps(device_info, ensure_ascii=False, indent=2)}")
         
         prompt = """你是一个智能家居控制专家。你的任务是根据用户意图生成具体的设备控制指令。
 
@@ -340,9 +382,78 @@ class ExpertAgent(BaseAgent):
         return prompt.format(
             device_info=json.dumps(device_info, ensure_ascii=False, indent=2),
             intent=json.dumps(intent, ensure_ascii=False, indent=2),
-            functions=json.dumps(functions, ensure_ascii=False, indent=2)
+            functions=json.dumps(device.get_functions(), ensure_ascii=False, indent=2)
         )
         
+    async def _call_llm(self, prompt: str, max_retries: int = 3) -> str:
+        """调用LLM API
+        
+        Args:
+            prompt: 提示词
+            max_retries: 最大重试次数
+            
+        Returns:
+            str: LLM响应文本
+            
+        Raises:
+            RuntimeError: 如果调用失败
+        """
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    payload = {
+                        "model": self.model_name,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        "stream": False
+                    }
+                    
+                    async with session.post(self.api_url, json=payload) as response:
+                        if response.status != 200:
+                            raise RuntimeError(f"API返回错误状态码: {response.status}")
+                        
+                        data = await response.json()
+                        
+                        # 检查响应格式
+                        if not isinstance(data, dict):
+                            raise RuntimeError(f"API返回格式错误: {data}")
+                        
+                        # 检查是否在加载中
+                        if data.get("done_reason") == "load":
+                            self.logger.warning(f"模型正在加载，等待2秒后重试...")
+                            await asyncio.sleep(2)
+                            retry_count += 1
+                            continue
+                            
+                        # 获取content
+                        message = data.get("message", {})
+                        content = message.get("content", "")
+                        
+                        if not content:
+                            raise RuntimeError(f"API响应content为空: {data}")
+                        
+                        return content
+                        
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                if retry_count < max_retries:
+                    self.logger.warning(f"LLM调用失败 (尝试 {retry_count}/{max_retries}): {str(e)}")
+                    # 使用指数退避策略
+                    await asyncio.sleep(2 ** retry_count)
+                else:
+                    self.logger.error(f"LLM调用失败，已重试{max_retries}次: {str(e)}")
+                    raise RuntimeError(f"LLM调用失败，已重试{max_retries}次: {str(last_error)}")
+        
+        raise RuntimeError(f"LLM调用失败，已达到最大重试次数: {str(last_error)}")
+
     def _clean_json_content(self, content: str) -> str:
         """清理JSON内容
         
@@ -351,7 +462,13 @@ class ExpertAgent(BaseAgent):
             
         Returns:
             str: 清理后的JSON字符串
+            
+        Raises:
+            ValueError: 无效的JSON内容
         """
+        if not content or not content.strip():
+            raise ValueError("空的JSON内容")
+            
         # 首先尝试查找JSON代码块
         match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', content)
         if match:
@@ -359,34 +476,48 @@ class ExpertAgent(BaseAgent):
         else:
             # 如果找不到代码块，尝试查找最外层的完整JSON对象
             json_str = content.strip()
-            # 确保它是一个有效的JSON对象
-            if not (json_str.startswith('{') and json_str.endswith('}')):
+            # 查找第一个 { 和最后一个 }
+            start = json_str.find('{')
+            end = json_str.rfind('}')
+            if start == -1 or end == -1:
                 raise ValueError("未找到有效的JSON对象")
+            json_str = json_str[start:end+1]
             
-        # 移除单行注释
+        # 移除注释
         json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
-        
-        # 移除多行注释
         json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
         
-        # 移除每行开头的空格和空行
+        # 清理每一行
         lines = []
         for line in json_str.split('\n'):
             line = line.strip()
-            if line:
+            if line and not line.startswith('//'):
                 lines.append(line)
         
         # 合并所有行
-        json_str = ''.join(lines)
+        json_str = ' '.join(lines)
         
-        # 替换中文引号为英文引号
-        json_str = json_str.replace('"', '"').replace('"', '"')
+        # 修复常见的JSON格式问题
+        json_str = (
+            json_str
+            .replace('"', '"')
+            .replace('"', '"')
+            .replace(''', "'")
+            .replace(''', "'")
+            .replace('，', ',')
+            .replace('：', ':')
+        )
         
         # 确保所有属性名都用双引号括起来
         json_str = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
         
-        return json_str
-        
+        # 验证JSON是否有效
+        try:
+            json.loads(json_str)
+            return json_str
+        except json.JSONDecodeError as e:
+            raise ValueError(f"清理后的JSON仍然无效: {str(e)}")
+
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """解析LLM响应
         
@@ -395,134 +526,51 @@ class ExpertAgent(BaseAgent):
             
         Returns:
             Dict[str, Any]: 解析后的动作数据
+            
+        Raises:
+            ValueError: 解析失败
         """
         try:
-            # 提取JSON字符串
-            json_str = response.strip()
-            if json_str.startswith("```") and json_str.endswith("```"):
-                json_str = json_str[3:-3].strip()
+            if not response or not response.strip():
+                raise ValueError("空响应")
                 
-            # 解析JSON
+            # 清理和解析JSON
+            json_str = self._clean_json_content(response)
             result = json.loads(json_str)
             
-            # 验证必要字段
+            # 验证响应格式
             if not isinstance(result, dict):
-                raise ValueError("Response must be a dictionary")
+                raise ValueError("响应必须是一个字典")
                 
             required_fields = ["function_calls", "explanation"]
-            if not all(field in result for field in required_fields):
-                raise ValueError(f"Response missing required fields: {required_fields}")
+            missing_fields = [field for field in required_fields if field not in result]
+            if missing_fields:
+                raise ValueError(f"响应缺少必要字段: {missing_fields}")
                 
-            # 验证function_calls格式
             if not isinstance(result["function_calls"], list):
-                raise ValueError("function_calls must be a list")
+                raise ValueError("function_calls必须是一个列表")
                 
             for call in result["function_calls"]:
                 if not isinstance(call, dict):
-                    raise ValueError("Each function call must be a dictionary")
+                    raise ValueError("每个function_call必须是一个字典")
                     
                 required_call_fields = ["name", "parameters"]
-                if not all(field in call for field in required_call_fields):
-                    raise ValueError(f"Function call missing required fields: {required_call_fields}")
+                missing_call_fields = [field for field in required_call_fields if field not in call]
+                if missing_call_fields:
+                    raise ValueError(f"function_call缺少必要字段: {missing_call_fields}")
                     
             return result
             
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON解析错误: {str(e)}")
-            raise ValueError(f"Invalid JSON format: {str(e)}")
+            raise ValueError(f"无效的JSON格式: {str(e)}")
+        except ValueError as e:
+            self.logger.error(f"响应格式错误: {str(e)}")
+            raise
         except Exception as e:
             self.logger.error(f"响应解析错误: {str(e)}")
-            raise ValueError(f"Response parsing error: {str(e)}")
+            raise ValueError(f"解析错误: {str(e)}")
         
-    def _get_device_functions(self, device: DeviceInfo) -> List[Dict[str, Any]]:
-        """获取设备可用的控制函数
-        
-        Args:
-            device: 设备信息对象
-            
-        Returns:
-            List[Dict[str, Any]]: 函数列表
-        """
-        try:
-            # 根据设备类型获取可用函数
-            device_type = device.type
-            functions = []
-            
-            # 基础控制函数
-            functions.append({
-                "name": f"{device_type}.set_power",
-                "description": "设置设备电源状态",
-                "parameters": {
-                    "device_id": "设备ID",
-                    "power": "电源状态(true/false)"
-                }
-            })
-            
-            # 根据设备类型添加特定函数
-            if device_type == "light":
-                functions.extend([
-                    {
-                        "name": f"{device_type}.set_brightness",
-                        "description": "设置灯光亮度",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "brightness": "亮度值(0-100)"
-                        }
-                    },
-                    {
-                        "name": f"{device_type}.set_color",
-                        "description": "设置灯光颜色",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "color": "颜色值(hex)"
-                        }
-                    }
-                ])
-            elif device_type == "airconditioner":
-                functions.extend([
-                    {
-                        "name": f"{device_type}.set_temperature",
-                        "description": "设置空调温度",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "temperature": "温度值(16-30)"
-                        }
-                    },
-                    {
-                        "name": f"{device_type}.set_mode",
-                        "description": "设置空调模式",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "mode": "工作模式(cool/heat/auto/dry/fan)"
-                        }
-                    },
-                    {
-                        "name": f"{device_type}.set_fan_speed",
-                        "description": "设置风速",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "speed": "风速(low/medium/high/auto)"
-                        }
-                    }
-                ])
-            elif device_type == "curtain":
-                functions.extend([
-                    {
-                        "name": f"{device_type}.set_position",
-                        "description": "设置窗帘位置",
-                        "parameters": {
-                            "device_id": "设备ID",
-                            "position": "位置(0-100)"
-                        }
-                    }
-                ])
-                
-            return functions
-            
-        except Exception as e:
-            self.logger.error(f"获取设备函数失败: {str(e)}")
-            return []
-
     def _validate_input(self, intent: Dict[str, Any], device: DeviceInfo) -> bool:
         """验证输入数据的有效性
         
@@ -573,11 +621,10 @@ class ExpertAgent(BaseAgent):
         """
         try:
             # 输入验证
-            if not self._validate_input(intent, device):
-                return {
-                    "function_calls": [],
-                    "explanation": "输入数据无效"
-                }
+            if not isinstance(intent, dict):
+                raise ValueError("意图必须是字典格式")
+            if not isinstance(device, DeviceInfo):
+                raise ValueError("设备必须是 DeviceInfo 类型")
                 
             # 记录处理开始
             self.logger.info(f"Generating actions for intent: {intent}")
@@ -600,10 +647,10 @@ class ExpertAgent(BaseAgent):
                 async with session.post(self.api_url, json=data) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        self.logger.error(f"生成动作失败: {error_text}")
+                        self.logger.error(f"调用LLM API失败: {error_text}")
                         return {
                             "function_calls": [],
-                            "explanation": f"生成动作失败: {error_text}"
+                            "explanation": "生成控制指令失败"
                         }
                         
                     result = await response.json()

@@ -64,7 +64,6 @@ class llm_service(LLMService):
         
         # 初始化两个Agent
         self.decoder = DecoderAgent(
-            agent_id="decoder_001",
             api_url="http://localhost:11434/api/chat",
             model_name="llama3.2-vision:latest"
         )
@@ -657,23 +656,22 @@ class llm_service(LLMService):
         """
         try:
             # 1. 理解用户意图
-            intent_result = await self.decoder.understand_intent(user_input, devices)
-            if intent_result["intent_type"] == "unknown":
+            intent = await self.decoder.understand_intent(user_input, devices)
+            if intent.intent_type == IntentType.UNKNOWN:
                 return "抱歉，我无法理解您的意图"
                 
             # 2. 获取目标设备
             target_device = None
-            if intent_result["device"]:  # 确保device字段不为None
-                for device in devices:
-                    if device.id == intent_result["device"]["id"]:
-                        target_device = device
-                        break
+            for device in devices:
+                if device.id == intent.device_id:
+                    target_device = device
+                    break
                     
             if not target_device:
-                return f"未找到设备: {intent_result['device']['name'] if intent_result['device'] else '未知设备'}"
+                return f"未找到设备: {intent.device_name}"
                 
             # 3. 生成动作
-            actions = await self.expert.generate_actions(intent_result, target_device)
+            actions = await self.expert.generate_actions(intent.dict(), target_device)
             
             # 4. 执行动作
             results = []
@@ -700,7 +698,7 @@ class llm_service(LLMService):
                 except Exception as e:
                     logger.error(f"执行函数 {func_name} 失败: {str(e)}")
                     continue
-            
+                    
             return actions["explanation"]
             
         except Exception as e:
