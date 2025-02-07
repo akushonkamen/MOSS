@@ -391,6 +391,9 @@ class ServiceManager:
         try:
             logger.info("正在启动所有服务...")
             
+            # 初始化LLM服务
+            await self.llm_service.initialize()
+            
             # 注册设备
             devices = await self.register_devices()
             logger.info(f"获取到的设备列表: {[f'{d.name} ({d.type})' for d in devices]}")

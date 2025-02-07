@@ -48,10 +48,8 @@ class AudioPlayer:
                     async for chunk in audio_stream:
                         f.write(chunk)
                         
-            # 使用系统命令播放
-            logger.debug(f"使用系统命令播放音频: {temp_path}")
-            subprocess.run(["afplay", temp_path], check=True)
-            logger.debug("音频播放完成")
+            # 使用异步方式播放
+            await self.play_file(temp_path)
             
         except Exception as e:
             logger.error(f"播放音频错误: {e}")
@@ -63,16 +61,34 @@ class AudioPlayer:
     async def play_file(self, file_path: str):
         """播放音频文件"""
         try:
-            logger.debug(f"使用系统命令播放音频文件: {file_path}")
-            subprocess.run(["afplay", file_path], check=True)
+            logger.debug(f"开始播放音频文件: {file_path}")
+            # 使用异步子进程运行播放命令
+            process = await asyncio.create_subprocess_exec(
+                "afplay", file_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # 等待播放完成
+            await process.wait()
             logger.debug("音频文件播放完成")
+            
         except Exception as e:
             logger.error(f"播放音频文件错误: {e}")
             
-    def stop_stream(self):
+    async def stop(self):
         """停止播放"""
         try:
-            # 尝试终止所有afplay进程
-            subprocess.run(["pkill", "afplay"], check=False)
+            # 使用异步子进程终止所有afplay进程
+            process = await asyncio.create_subprocess_exec(
+                "pkill", "afplay",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.wait()
         except Exception as e:
-            logger.error(f"停止播放错误: {e}") 
+            logger.error(f"停止播放错误: {e}")
+
+    async def stop_stream(self):
+        """停止播放"""
+        await self.stop() 

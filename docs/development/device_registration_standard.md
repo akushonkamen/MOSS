@@ -1,195 +1,262 @@
-# 智能家居设备注册标准
+# MOSS 设备注册标准
 
-## 1. 设备标识
+## 1. 设备注册流程
 
-### 1.1 设备ID
-- 格式: 只能包含字母、数字、下划线和连字符
-- 长度: 建议不超过32个字符
-- 唯一性: 在系统内必须唯一
-- 示例: `light_001`, `ac_001`, `curtain_001`
+### 1.1 基本流程
+1. 设备发现
+2. 能力声明
+3. 状态初始化
+4. 注册确认
+5. 开始服务
 
-### 1.2 设备名称
-- 长度: 不超过32个字符
-- 可读性: 应该具有描述性和可读性
-- 示例: "客厅灯", "卧室空调"
+### 1.2 智能体交互流程
+1. 向AgentDispatchCenter注册设备能力
+2. 获取设备控制智能体
+3. 建立设备状态监听
+4. 配置处理管道
+5. 启动服务
 
-## 2. 设备元数据
+## 2. 设备能力声明
 
 ### 2.1 基本信息
-```python
+```json
 {
-    "manufacturer": "制造商名称",
-    "model": "设备型号",
-    "firmware": "固件版本",
-    "protocol": "通信协议版本"
+    "device_id": "string",
+    "device_name": "string",
+    "device_type": "string",
+    "manufacturer": "string",
+    "model": "string",
+    "firmware_version": "string"
 }
 ```
 
-### 2.2 设备能力
-支持的能力类型：
-- `power`: 电源控制
-- `brightness`: 亮度控制
-- `temperature`: 温度控制
-- `mode`: 模式控制
-- `position`: 位置控制
-- `schedule`: 定时控制
-- `scene`: 场景控制
-- `voice`: 语音控制
-
-## 3. 设备参数
-
-### 3.1 参数定义
-每个参数必须包含：
-- `type`: 参数类型 (boolean/integer/float/string)
-- `description`: 参数描述
-- `current_value`: 当前值
-- `min_value`: 最小值（可选）
-- `max_value`: 最大值（可选）
-- `unit`: 单位（可选）
-- `enum_values`: 枚举值列表（可选）
-
-### 3.2 标准参数范围
-- 亮度: 0-100%
-- 温度: 16-30°C
-- 位置: 0-100%
-- 端口: 1024-65535
-
-## 4. 设备分组
-
-### 4.1 分组信息
-```python
+### 2.2 智能体交互能力
+```json
 {
-    "group_id": "分组ID",
-    "name": "分组名称",
-    "location": "位置信息",
-    "devices": ["设备ID列表"]
-}
-```
-
-### 4.2 分组规则
-- 一个设备可以属于一个分组
-- 分组ID必须唯一
-- 分组名称应具有描述性
-
-## 5. 状态报告
-
-### 5.1 状态信息
-```python
-{
-    "timestamp": "状态更新时间",
-    "online": true/false,
-    "error": "错误信息（可选）",
-    "parameters": {
-        "参数名": "参数值"
-    },
-    "metrics": {
-        "cpu_usage": "CPU使用率",
-        "memory_usage": "内存使用率",
-        "network_latency": "网络延迟",
-        "signal_strength": "信号强度",
-        "uptime": "运行时间"
+    "agent_capabilities": {
+        "decoder_support": true,
+        "expert_support": true,
+        "memory_support": false,
+        "learner_support": false,
+        "supported_pipelines": [
+            "basic_control",
+            "status_query",
+            "scene_control"
+        ],
+        "custom_agents": []
     }
 }
 ```
 
-### 5.2 状态更新要求
-- 定期更新: 建议每60秒更新一次
-- 事件触发: 状态变化时立即更新
-- 错误报告: 发生错误时必须更新状态
-
-## 6. 安全要求
-
-### 6.1 通信安全
-- 必须使用TLS/SSL加密通信
-- 支持设备认证机制
-- 实现访问控制策略
-
-### 6.2 数据安全
-- 敏感数据加密存储
-- 实现数据完整性校验
-- 提供安全的配置管理
-
-## 7. 注册流程
-
-### 7.1 设备注册步骤
-1. 准备设备信息
-2. 验证设备参数
-3. 注册设备到系统
-4. 加入设备分组（可选）
-5. 开始状态报告
-
-### 7.2 注册验证
-- 验证设备ID格式
-- 验证设备名称长度
-- 验证端口号范围
-- 验证必要参数
-
-## 8. 示例代码
-
-### 8.1 设备注册
-```python
-registration = DeviceRegistrationValidation(
-    device_id="light_001",
-    name="客厅灯",
-    type="light",
-    port=8001,
-    metadata=DeviceMetadata(
-        manufacturer="智能家居公司",
-        model="SL-001",
-        firmware="1.0.0",
-        protocol="1.0",
-        capabilities=["power", "brightness"]
-    )
-)
-
-device_info = await registry.register_device(registration)
+### 2.3 控制能力
+```json
+{
+    "control_capabilities": {
+        "operations": [
+            {
+                "name": "string",
+                "description": "string",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        ],
+        "states": [
+            {
+                "name": "string",
+                "type": "string",
+                "readable": true,
+                "writable": true
+            }
+        ]
+    }
+}
 ```
 
-### 8.2 状态更新
-```python
-status = DeviceStatusReport(
-    timestamp=datetime.now(),
-    online=True,
-    parameters={
-        "power": True,
-        "brightness": 80
-    },
-    metrics=DeviceMetrics(
-        cpu_usage=10.5,
-        memory_usage=25.0,
-        network_latency=50.0,
-        signal_strength=-65,
-        uptime=3600
-    )
-)
+## 3. 设备注册接口
 
-await registry.update_device_status("light_001", status)
+### 3.1 注册请求
+```http
+POST /api/v1/devices/register
+Content-Type: application/json
+
+{
+    "basic_info": {},
+    "agent_capabilities": {},
+    "control_capabilities": {}
+}
 ```
 
-## 9. 错误处理
+### 3.2 注册响应
+```json
+{
+    "success": true,
+    "device_token": "string",
+    "assigned_agents": [
+        {
+            "agent_id": "string",
+            "agent_type": "string",
+            "pipeline_id": "string"
+        }
+    ],
+    "error": null
+}
+```
 
-### 9.1 错误类型
-- 设备ID重复
-- 参数验证失败
-- 设备离线
-- 通信超时
-- 认证失败
+## 4. 设备状态管理
 
-### 9.2 错误响应
-- 提供详细的错误信息
-- 记录错误日志
-- 实现错误恢复机制
+### 4.1 状态上报
+```json
+{
+    "device_id": "string",
+    "timestamp": "string",
+    "states": {},
+    "metrics": {}
+}
+```
 
-## 10. 维护要求
+### 4.2 智能体状态同步
+```json
+{
+    "device_id": "string",
+    "agent_states": [
+        {
+            "agent_id": "string",
+            "status": "string",
+            "metrics": {}
+        }
+    ]
+}
+```
 
-### 10.1 日志记录
-- 记录设备注册事件
-- 记录状态变更
-- 记录错误信息
-- 记录安全事件
+## 5. 设备控制标准
 
-### 10.2 监控告警
-- 设备离线告警
-- 性能指标告警
-- 安全事件告警
-- 错误率监控 
+### 5.1 控制请求
+```json
+{
+    "device_id": "string",
+    "operation": "string",
+    "parameters": {},
+    "pipeline_id": "string"
+}
+```
+
+### 5.2 控制响应
+```json
+{
+    "success": true,
+    "result": {},
+    "error": null,
+    "agent_feedback": [
+        {
+            "agent_id": "string",
+            "feedback": {}
+        }
+    ]
+}
+```
+
+## 6. 错误处理
+
+### 6.1 错误码定义
+- 1000: 注册失败
+- 1001: 能力不支持
+- 1002: 智能体不可用
+- 1003: 管道配置失败
+- 1004: 状态同步失败
+
+### 6.2 错误响应格式
+```json
+{
+    "error_code": "number",
+    "error_message": "string",
+    "error_details": {},
+    "recovery_suggestion": "string"
+}
+```
+
+## 7. 安全要求
+
+### 7.1 认证要求
+- 设备身份认证
+- 通信加密
+- 令牌管理
+- 权限控制
+
+### 7.2 数据安全
+- 数据加密
+- 隐私保护
+- 访问控制
+- 审计日志
+
+## 8. 性能要求
+
+### 8.1 响应时间
+- 注册响应: < 1s
+- 状态同步: < 100ms
+- 控制执行: < 200ms
+- 错误恢复: < 500ms
+
+### 8.2 并发处理
+- 支持多设备并发
+- 支持多管道并发
+- 支持多智能体并发
+- 负载均衡
+
+## 9. 可靠性要求
+
+### 9.1 故障恢复
+- 自动重连
+- 状态恢复
+- 管道重建
+- 智能体重启
+
+### 9.2 监控要求
+- 心跳检测
+- 性能监控
+- 错误监控
+- 状态监控
+
+## 10. 版本管理
+
+### 10.1 版本兼容性
+- 向后兼容
+- 版本协商
+- 能力降级
+- 平滑升级
+
+### 10.2 升级流程
+1. 版本检查
+2. 能力协商
+3. 配置更新
+4. 重新注册
+5. 服务迁移
+
+## 11. 测试要求
+
+### 11.1 注册测试
+- 基本流程测试
+- 异常流程测试
+- 性能测试
+- 安全测试
+
+### 11.2 智能体测试
+- 能力验证
+- 管道测试
+- 并发测试
+- 恢复测试
+
+## 12. 文档要求
+
+### 12.1 设备文档
+- 能力说明
+- 接口文档
+- 示例代码
+- 故障排除
+
+### 12.2 集成文档
+- 集成指南
+- 测试用例
+- 最佳实践
+- 常见问题 

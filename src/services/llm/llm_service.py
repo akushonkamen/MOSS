@@ -63,8 +63,29 @@ class llm_service(LLMService):
         self.functions: Dict[str, Dict[str, Any]] = {}  # 可用函数集合
         
         # 初始化两个Agent
-        self.decoder = DecoderAgent()
-        self.expert = ExpertAgent()
+        self.decoder = DecoderAgent(
+            agent_id="decoder_001",
+            api_url="http://localhost:11434/api/chat",
+            model_name="llama3.2-vision:latest"
+        )
+        self.expert = ExpertAgent(
+            agent_id="expert_001",
+            api_url="http://localhost:11434/api/chat",
+            model_name="llama3.1:latest"
+        )
+        
+        # 会话历史
+        self.session_history: Dict[str, List[Dict[str, Any]]] = {}
+        
+        # 初始化标志
+        self._initialized = False
+        
+    async def initialize(self):
+        """异步初始化"""
+        if not self._initialized:
+            await self.decoder.initialize()
+            await self.expert.initialize()
+            self._initialized = True
         
     def register_function(self, func: Callable, description: str = "", **kwargs):
         """注册函数
@@ -182,22 +203,23 @@ class llm_service(LLMService):
             devices.append(device_info)
             
         # 2. 第一个Agent (decoder): 理解用户意图
-        intent = await self.decoder.understand_intent(user_input, devices)
-        if intent.intent_type == "unknown":
+        intent_result = await self.decoder.understand_intent(user_input, devices)
+        if intent_result["intent_type"] == "unknown":
             yield "抱歉，我无法理解您的意图"
             return
             
         # 3. 获取设备可用的控制函数和设备信息
         device_functions = []
         target_device = None
-        for device in devices:
-            if device.id == intent.device_id:
-                target_device = device
-                break
-                
-        if functions:
+        if intent_result["device"]:  # 确保device字段不为None
+            for device in devices:
+                if device.id == intent_result["device"]["id"]:
+                    target_device = device
+                    break
+                    
+        if functions and target_device and intent_result["device"]:
             # 获取设备类型前缀
-            device_type_prefix = intent.device_id.split('.')[0]  # 例如从 "ac.living_room" 获取 "ac"
+            device_type_prefix = intent_result["device"]["type"]  # 从设备类型获取前缀
             logger.debug(f"设备类型前缀: {device_type_prefix}")
             
             for func in functions:
@@ -225,47 +247,46 @@ class llm_service(LLMService):
         logger.debug(f"目标设备: {target_device}")
             
         response = await self.expert.generate_actions(
-            intent,
-            target_device,
-            device_functions
+            intent_result,
+            target_device
         )
         
         # 5. 执行函数调用
-        for call in response.function_calls:
+        for call in response["function_calls"]:
             func = None
             for f in functions:
-                if f.name == call.name:
+                if f.name == call["name"]:
                     func = f
                     break
                     
             if func and func.implementation:
                 try:
                     # 如果是调温或调节相关的操作，先确保设备是开启的
-                    if intent.intent_type in ["adjust_temperature", "adjust_brightness", "adjust_position"]:
+                    if intent_result["intent_type"] in ["adjust_temperature", "adjust_brightness", "adjust_position"]:
                         power_func = None
                         for f in functions:
-                            if f.name == f"{intent.device_type}.set_power":
+                            if f.name == f"{intent_result['device']['type']}.set_power":
                                 power_func = f
                                 break
                         if power_func and power_func.implementation:
-                            logger.info(f"打开设备 {intent.device_id} 电源")
-                            await power_func.implementation(device_id=intent.device_id, power=True)
+                            logger.info(f"打开设备 {intent_result['device']['id']} 电源")
+                            await power_func.implementation(device_id=intent_result['device']['id'], power=True)
                             # 等待设备状态更新
                             await asyncio.sleep(0.5)
                             
                     # 执行实际的控制函数
-                    logger.info(f"执行函数 {call.name} 参数: {call.parameters}")
-                    await func.implementation(**call.parameters)
+                    logger.info(f"执行函数 {call['name']} 参数: {call['parameters']}")
+                    await func.implementation(**call["parameters"])
                     # 等待设备状态更新
                     await asyncio.sleep(0.5)
                 except Exception as e:
-                    logger.error(f"执行函数 {call.name} 失败: {str(e)}")
-                    yield f"执行操作 {call.name} 时出错: {str(e)}"
+                    logger.error(f"执行函数 {call['name']} 失败: {str(e)}")
+                    yield f"执行操作 {call['name']} 时出错: {str(e)}"
                     return
-        
+                    
         # 等待最终状态更新
         await asyncio.sleep(1)
-        yield response.explanation
+        yield response["explanation"]
 
     def clear_conversation(self, session_id: str):
         """清除指定会话的历史记录"""
@@ -636,22 +657,23 @@ class llm_service(LLMService):
         """
         try:
             # 1. 理解用户意图
-            intent = await self.decoder.understand_intent(user_input, devices)
-            if intent.intent_type == "unknown":
+            intent_result = await self.decoder.understand_intent(user_input, devices)
+            if intent_result["intent_type"] == "unknown":
                 return "抱歉，我无法理解您的意图"
                 
             # 2. 获取目标设备
             target_device = None
-            for device in devices:
-                if device.id == intent.device_id:
-                    target_device = device
-                    break
+            if intent_result["device"]:  # 确保device字段不为None
+                for device in devices:
+                    if device.id == intent_result["device"]["id"]:
+                        target_device = device
+                        break
                     
             if not target_device:
-                return f"未找到设备: {intent.device_name}"
+                return f"未找到设备: {intent_result['device']['name'] if intent_result['device'] else '未知设备'}"
                 
             # 3. 生成动作
-            actions = await self.expert.generate_actions(intent.to_dict(), target_device)
+            actions = await self.expert.generate_actions(intent_result, target_device)
             
             # 4. 执行动作
             results = []
@@ -665,12 +687,20 @@ class llm_service(LLMService):
                     logger.error(f"未找到函数: {func_name}")
                     continue
                     
-                func = self.functions[func_name]
+                func_info = self.functions[func_name]
+                if "implementation" not in func_info:
+                    logger.error(f"函数 {func_name} 缺少implementation字段")
+                    continue
+                    
                 logger.info(f"执行函数 {func_name} 参数: {call['parameters']}")
-                result = await func["implementation"](**call["parameters"])
-                results.append(result)
-                logger.debug(f"函数执行结果: {result}")
-                
+                try:
+                    result = await func_info["implementation"](**call["parameters"])
+                    results.append(result)
+                    logger.debug(f"函数执行结果: {result}")
+                except Exception as e:
+                    logger.error(f"执行函数 {func_name} 失败: {str(e)}")
+                    continue
+            
             return actions["explanation"]
             
         except Exception as e:

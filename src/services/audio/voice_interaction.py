@@ -1,17 +1,22 @@
-import asyncio
-import io
-import wave
-import whisper
-import tempfile
+"""语音交互管理器"""
 import os
-import numpy as np
-import subprocess
-from loguru import logger
+import asyncio
+import logging
+import tempfile
+import wave
+from typing import Optional, Callable, List, Dict, Any, Literal, Awaitable
 from dataclasses import dataclass
-from typing import Optional, Callable, Awaitable, Literal
+
+# 第三方库
+import numpy as np
+import whisper
+import edge_tts
+
+# 本地模块
 from .recorder_service import AudioRecorder, AudioConfig as RecorderConfig
 from .player_service import AudioPlayer, AudioConfig as PlayerConfig
 from .vad_service import VADService, VADResult
+from .tts_service import TTSService
 
 WhisperModelSize = Literal["tiny", "base", "small", "medium", "large"]
 
@@ -42,23 +47,43 @@ class VoiceInteractionManager:
             on_speech_end: 说话结束回调
             on_transcribe: 语音识别结果回调
         """
-        self.config = config
-        self.recorder = AudioRecorder(config.recorder_config)
-        self.player = AudioPlayer(config.player_config)
-        self.vad = VADService(config.vad_aggressiveness)
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("开始初始化语音交互管理器...")
         
-        self.on_speech_start = on_speech_start
-        self.on_speech_end = on_speech_end
-        self.on_transcribe = on_transcribe
-        
-        logger.info(f"正在加载Whisper {config.whisper_model} 模型...")
-        self.whisper = whisper.load_model(config.whisper_model)
-        logger.info("Whisper模型加载完成")
-        
-        self._is_running = False
-        self._is_speaking = False
-        self._silence_frames = 0
-        self._speech_frames = []
+        try:
+            self.config = config
+            self.logger.debug(f"配置信息: {config}")
+            
+            self.logger.debug("初始化录音设备...")
+            self.recorder = AudioRecorder(config.recorder_config)
+            
+            self.logger.debug("初始化播放设备...")
+            self.player = AudioPlayer(config.player_config)
+            
+            self.logger.debug(f"初始化VAD服务 (灵敏度: {config.vad_aggressiveness})...")
+            self.vad = VADService(config.vad_aggressiveness)
+            
+            self.logger.debug("初始化TTS服务...")
+            self.tts_service = TTSService()
+            
+            self.on_speech_start = on_speech_start
+            self.on_speech_end = on_speech_end
+            self.on_transcribe = on_transcribe
+            
+            self.logger.info(f"正在加载Whisper {config.whisper_model} 模型...")
+            self.whisper = whisper.load_model(config.whisper_model)
+            self.logger.info("Whisper模型加载完成")
+            
+            self._is_running = False
+            self._is_speaking = False
+            self._silence_frames = 0
+            self._speech_frames = []
+            
+            self.logger.info("语音交互管理器初始化完成")
+            
+        except Exception as e:
+            self.logger.error(f"初始化语音交互管理器失败: {e}", exc_info=True)
+            raise
         
     def _save_wav(self, frames: list[bytes], filename: str):
         """保存WAV文件"""
@@ -158,25 +183,65 @@ class VoiceInteractionManager:
             except Exception as e:
                 logger.error(f"处理音频块错误: {e}")
             
-    async def speak(self, text: str):
-        """播放合成语音"""
-        logger.info(f"准备播放语音: {text}")
+    async def speak(self, text: str) -> bool:
+        """文本转语音并播放
         
+        Args:
+            text: 要转换的文本
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not text:
+            self.logger.warning("收到空文本，跳过语音合成")
+            return False
+            
         try:
-            # 使用系统命令say进行语音合成和播放
-            logger.debug("开始语音合成和播放...")
-            subprocess.run(["say", "-v", "Tingting", text], check=True)
-            logger.debug("语音播放完成")
+            # 使用TTS服务合成语音
+            temp_path = await self.tts_service.synthesize(text)
+            if not temp_path:
+                self.logger.error("语音合成失败")
+                return False
+                
+            try:
+                # 播放语音
+                self.logger.debug("开始播放语音...")
+                await self.player.play_file(temp_path)
+                self.logger.debug("语音播放完成")
+                return True
+                
+            finally:
+                # 确保临时文件被删除
+                if os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                    except Exception as e:
+                        self.logger.warning(f"删除临时文件失败: {e}")
+                        
         except Exception as e:
-            logger.error(f"语音合成或播放错误: {e}")
+            self.logger.error(f"语音合成或播放错误: {e}", exc_info=True)
+            return False
         
     def start(self):
         """启动语音交互服务"""
         self._is_running = True
         asyncio.create_task(self.start_listening())
         
-    def stop(self):
-        """停止语音交互服务"""
-        self._is_running = False
-        self.recorder.stop_recording()
-        self.player.stop_stream() 
+    async def stop(self):
+        """停止语音交互"""
+        logger.info("正在停止语音交互...")
+        try:
+            # 停止录音
+            if self.recorder:
+                await self.recorder.stop()
+                
+            # 停止播放
+            if self.player:
+                await self.player.stop()
+                
+            # 停止VAD服务
+            if self.vad:
+                await self.vad.stop()
+                
+        except Exception as e:
+            logger.error(f"停止语音交互错误: {e}") 
