@@ -1,0 +1,146 @@
+{
+  "device_info": {
+    "device_type": "Robot",
+    "name": "My Robot",
+    "description": "A robot for demonstration purposes",
+    "capabilities": [
+      "move_arm",
+      "pick_item",
+      "place_item"
+    ],
+    "protocol": "HTTP",
+    "auth_required": false
+  },
+  "api_mapping": {
+    "status": {
+      "endpoint": "/info",
+      "method": "GET",
+      "parameters": {},
+      "response_mapping": {
+        "detail": "Not Found"
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    },
+    "control": {
+      "endpoint": "/device",
+      "method": "POST",
+      "parameters": {
+        "$ref": "#/definitions/RobotControlParams"
+      },
+      "response_mapping": {
+        "status_code": 200
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    },
+    "robot_state": {
+      "endpoint": "/status",
+      "method": "GET",
+      "parameters": {},
+      "response_mapping": {
+        "power_state": "ON",
+        "operation_mode": "AUTO",
+        "controller_state": "NORMAL",
+        "joint_position": [
+          0,
+          0,
+          0
+        ],
+        "cartesian_position": [
+          0,
+          0,
+          0
+        ],
+        "speed_ratio": 1.0,
+        "error_code": null
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    },
+    "move_arm": {
+      "endpoint": "/api/move_arm",
+      "method": "POST",
+      "parameters": {
+        "$ref": "#/definitions/ArmMoveParams"
+      },
+      "response_mapping": {
+        "status_code": 200
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    },
+    "pick_item": {
+      "endpoint": "/api/pick_item",
+      "method": "POST",
+      "parameters": {
+        "$ref": "#/definitions/PickItemParams"
+      },
+      "response_mapping": {
+        "status_code": 200
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    },
+    "place_item": {
+      "endpoint": "/api/place_item",
+      "method": "POST",
+      "parameters": {
+        "$ref": "#/definitions/PlaceItemParams"
+      },
+      "response_mapping": {
+        "status_code": 200
+      },
+      "validation": {
+        "required_params": [],
+        "optional_params": [],
+        "response_schema": {}
+      }
+    }
+  },
+  "validation_rules": {
+    "parameters": [
+      {
+        "name": "x",
+        "type": "integer",
+        "minimum": -100,
+        "maximum": 100
+      },
+      {
+        "name": "y",
+        "type": "integer",
+        "minimum": -100,
+        "maximum": 100
+      }
+    ],
+    "response": [
+      {
+        "name": "status_code",
+        "type": "integer",
+        "enum": [
+          200,
+          404
+        ]
+      },
+      {
+        "name": "detail",
+        "type": "string"
+      }
+    ]
+  }
+}

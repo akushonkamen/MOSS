@@ -108,10 +108,10 @@ def mock_device_discovery(monkeypatch):
 
 @pytest.fixture
 def mock_smart_home_controller(mock_device_discovery):
-    """Mock智能家居控制器"""
-    from src.services.smart_home.smart_home_controller import SmartHomeController
+    """Mock智能工业AI控制器"""
+    from src.services.smart_home.smart_home_controller import Industrial AIController
     
-    controller = SmartHomeController()
+    controller = Industrial AIController()
     controller.device_discovery = mock_device_discovery
     return controller
 

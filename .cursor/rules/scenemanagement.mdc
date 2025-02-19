@@ -1,0 +1,13 @@
+---
+description: scene dev
+globs: src/services/scene
+---
+
+
+每次回复，请都以“
+==================
+Ok now we are working on scene management
+==================
+”开头来回复。
+Read and follow  [SceneService.md](mdc:docs/development/standards/services/SceneService.md) before developing any scene-related work.
+

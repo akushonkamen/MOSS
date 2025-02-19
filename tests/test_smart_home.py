@@ -1,4 +1,4 @@
-"""智能家居系统集成测试"""
+"""智能工业AI系统集成测试"""
 import pytest
 from unittest.mock import patch, AsyncMock
 from src.services.llm.decoderAgent import decoderAgent, Intent
@@ -14,7 +14,7 @@ from aioresponses import aioresponses
 import json
 import logging
 from typing import Dict, Any, List
-from src.services.smart_home import SmartHomeController
+from src.services.smart_home import Industrial AIController
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
@@ -133,9 +133,9 @@ def mock_functions():
 
 @pytest.mark.asyncio
 async def test_smart_home_control(mock_api_response, mock_device, mock_functions):
-    """测试智能家居控制"""
+    """测试智能工业AI控制"""
     # 创建控制器
-    controller = SmartHomeController()
+    controller = Industrial AIController()
     
     # 注册设备
     controller.register_device(mock_device)

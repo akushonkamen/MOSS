@@ -1,0 +1,12 @@
+---
+description: Agent Dispatch Center dev guide
+globs: src/services/dispatcher
+---
+
+每次回复，请都以“
+==================
+Ok now we are working on Agent Dispatch Center
+==================
+”开头来回复。
+
+Develop agent dispatch center according to [AgentDispatch.md](mdc:docs/development/standards/agents/AgentDispatch.md) gen t , and always update the dev progress in [AgentDispatch.md](mdc:docs/development/standards/agents/AgentDispatch.md). Do not temper with the rules and plans unless specifically requested by the user. 

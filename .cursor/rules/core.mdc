@@ -1,0 +1,10 @@
+---
+description: core function dev
+globs: src/services/core
+---
+每次回复，请都以“
+==================
+Ok now we are working on Core Services
+==================
+”开头来回复。
+Read and follow [CoreService.md](mdc:docs/development/standards/core/CoreService.md) [NetworkArchitecture.md](mdc:docs/development/standards/core/NetworkArchitecture.md) [SecurityPolicy.md](mdc:docs/development/standards/core/SecurityPolicy.md) [ErrorCodes.md](mdc:docs/development/standards/core/ErrorCodes.md) when developing core service

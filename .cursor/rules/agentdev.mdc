@@ -1,0 +1,12 @@
+---
+description: Building Agents
+globs: src/services/agents/*.py
+---
+每次回复，请都以“
+==================
+Ok now we are working on Agents
+==================
+”开头来回复。
+
+Read and follow  [AgentDevelopment.md](mdc:docs/development/standards/agents/AgentDevelopment.md) [AgentDispatch.md](mdc:docs/development/standards/agents/AgentDispatch.md) [AgentModule.md](mdc:docs/development/standards/agents/AgentModule.md) before developing any Agent.
+

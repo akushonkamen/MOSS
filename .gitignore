@@ -49,13 +49,13 @@ log/
 *.sqlite3
 *.db
 
-# Media
-media/
-!media/.gitkeep
-
-# Static
-static/
-!static/.gitkeep
+# Assets
+assets/media/*
+!assets/media/.gitkeep
+assets/static/*
+!assets/static/.gitkeep
+assets/sounds/*
+!assets/sounds/.gitkeep
 
 # Temporary files
 *.tmp
@@ -113,4 +113,9 @@ poetry.lock
 
 # Prometheus & Grafana
 prometheus_data/
-grafana_data/ 
+grafana_data/
+
+# LLM Cache
+data/llm_cache/
+**/llm_cache/
+*.cache.json 

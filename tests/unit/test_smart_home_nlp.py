@@ -1,14 +1,14 @@
-"""智能家居自然语言处理测试"""
+"""智能工业AI自然语言处理测试"""
 import pytest
 import asyncio
 from typing import Dict, Any, List
-from src.services.smart_home import SmartHomeController
+from src.services.smart_home import Industrial AIController
 from src.services.devices.device_info import DeviceInfo, DeviceParameter
 
 @pytest.fixture
 async def controller():
     """创建控制器实例"""
-    controller = SmartHomeController(
+    controller = Industrial AIController(
         api_url="http://localhost:11434/api/chat",
         model_name="llama3.1:latest"
     )
@@ -141,7 +141,7 @@ async def controller():
     ("窗帘开得太大了", "curtain.bedroom", {"position": 30}),
     ("空调温度高了", "ac.living_room", {"temperature": 24}),
 ])
-async def test_nlp_commands(controller: SmartHomeController, command: str, expected_device: str, expected_state: Dict[str, Any]):
+async def test_nlp_commands(controller: Industrial AIController, command: str, expected_device: str, expected_state: Dict[str, Any]):
     """测试自然语言命令处理"""
     # 获取控制器实例
     ctrl = await controller
@@ -166,7 +166,7 @@ async def test_nlp_commands(controller: SmartHomeController, command: str, expec
     ("把灯光调到200%", "亮度超出范围"),
     ("打开", "无法理解命令"),
 ])
-async def test_error_handling(controller: SmartHomeController, command: str, expected_error: str):
+async def test_error_handling(controller: Industrial AIController, command: str, expected_error: str):
     """测试错误处理"""
     # 获取控制器实例
     ctrl = await controller
@@ -182,7 +182,7 @@ async def test_error_handling(controller: SmartHomeController, command: str, exp
     ("关闭所有设备", ["light.living_room", "light.bedroom", "ac.living_room", "curtain.bedroom"]),
     ("客厅的设备都打开", ["light.living_room", "ac.living_room"]),
 ])
-async def test_multi_device_control(controller: SmartHomeController, command: str, expected_devices: List[str]):
+async def test_multi_device_control(controller: Industrial AIController, command: str, expected_devices: List[str]):
     """测试多设备控制"""
     # 获取控制器实例
     ctrl = await controller

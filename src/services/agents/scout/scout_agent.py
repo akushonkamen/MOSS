@@ -220,18 +220,15 @@ class LLMScoutAgent(BaseAgent):
     "supported_operations": [
         "从响应中识别出的具体操作"
     ],
-    "data_models": [
-        "识别出的关键数据结构及其用途"
-    ],
     "reasoning": "详细解释分析推理过程",
     "confidence": 0.0-1.0之间的置信度
 }}
 
 注意：
-1. 不要被预设的字段名限制，如果发现其他重要信息也请提取
-2. 重点关注API响应的语义特征，而不是固定的字段名
-3. 对于不确定的信息，可以基于上下文进行合理推断
-4. 如果无法确定是设备控制接口，请给出详细的推理过程
+1. 请确保返回的是有效的JSON格式
+2. 不要使用省略号(...)
+3. 不要包含重复的字段
+4. 对于未知的值使用空字符串或空数组
 """
             response = await self._call_llm(prompt)
             
@@ -248,55 +245,72 @@ class LLMScoutAgent(BaseAgent):
                     self._logger.debug(f"LLM原始响应: {response}")
                     self._logger.debug(f"提取的JSON字符串: {json_str}")
                     
-                    result = json.loads(json_str)
-                    self._logger.debug(f"解析后的结果: {json.dumps(result, indent=2, ensure_ascii=False)}")
-                    
-                    if isinstance(result, dict) and result.get("is_device"):
-                        # 从port_data中提取基本信息
-                        metadata = response_data.get("metadata", {})
-                        address = metadata.get("address", port_data.get("address", "unknown"))
-                        port = metadata.get("port", port_data.get("port", 0))
+                    try:
+                        result = json.loads(json_str)
+                        self._logger.debug(f"解析后的结果: {json.dumps(result, indent=2, ensure_ascii=False)}")
                         
-                        # 构建设备信息
-                        device_info = {
-                            "device_id": f"{result['device_type']}_{port}",
-                            "device_type": result["device_type"],
-                            "name": result.get("device_name", f"Device at port {port}"),
-                            "brand": result.get("brand", "Unknown"),
-                            "capabilities": result.get("capabilities", []),
-                            "address": address,
-                            "port": port,
-                            "metadata": {
+                        if isinstance(result, dict) and result.get("is_device"):
+                            # 从port_data中提取基本信息
+                            metadata = response_data.get("metadata", {})
+                            address = metadata.get("address", port_data.get("address", "unknown"))
+                            port = metadata.get("port", port_data.get("port", 0))
+                            
+                            # 构建设备信息
+                            device_info = {
+                                "device_id": f"{result['device_type']}_{port}",
+                                "device_type": result["device_type"],
+                                "name": result.get("device_name", f"Device at port {port}"),
+                                "brand": result.get("brand", "Unknown"),
+                                "capabilities": result.get("capabilities", []),
                                 "address": address,
                                 "port": port,
-                                "api_type": result.get("api_type"),
-                                "api_endpoints": result.get("api_endpoints", []),
-                                "confidence": result.get("confidence", 0),
-                                "discovery_time": datetime.now().isoformat(),
-                                "reasoning": result.get("reasoning", ""),
-                                "raw_analysis": result  # 保存完整的分析结果
+                                "api_url": response_data.get("api_url"),
+                                "endpoints": response_data.get("endpoints", {}),
+                                "available_endpoints": response_data.get("available_endpoints", []),
+                                "metadata": {
+                                    "address": address,
+                                    "port": port,
+                                    "api_type": result.get("api_type", ""),
+                                    "api_endpoints": result.get("api_endpoints", []),
+                                    "confidence": result.get("confidence", 0),
+                                    "discovery_time": datetime.now().isoformat(),
+                                    "reasoning": result.get("reasoning", ""),
+                                    "raw_analysis": {k: v for k, v in result.items() if k != "data_models"}
+                                },
+                                "response_data": response_data
                             }
-                        }
-                        
-                        # 发布设备发现事件
-                        await event_bus.publish(
-                            EventType.DEVICE,
-                            "device_discovered",
-                            device_info
-                        )
-                        
-                        self._logger.info(f"设备注册事件已发布: {device_info['name']} ({device_info['device_id']})")
-                    else:
-                        self._logger.info(f"\n[分析结果] 端口 {port_data.get('port', 'unknown')}:")
-                        self._logger.info(f"结果: 不是设备控制接口")
-                        self._logger.info(f"原因: {result.get('reasoning', 'No reasoning provided')}")
-                        self._logger.info(f"置信度: {result.get('confidence', 0)}")
-
-                    return result
-            except json.JSONDecodeError:
-                self._logger.warning(f"LLM返回的结果不是有效的JSON: {response}")
-                
-            return {}
+                            
+                            # 发布设备发现事件
+                            await event_bus.publish(
+                                EventType.DEVICE,
+                                "device_discovered",
+                                device_info
+                            )
+                            
+                            self._logger.info(f"设备发现事件已发布: {device_info['name']} ({device_info['device_id']})")
+                            return result
+                        else:
+                            self._logger.info(f"\n[分析结果] 端口 {port_data.get('port', 'unknown')}:")
+                            self._logger.info(f"结果: 不是设备控制接口")
+                            self._logger.info(f"原因: {result.get('reasoning', 'No reasoning provided')}")
+                            self._logger.info(f"置信度: {result.get('confidence', 0)}")
+                            return result
+                    except json.JSONDecodeError as e:
+                        self._logger.error(f"JSON解析错误: {str(e)}")
+                        # 尝试清理JSON字符串
+                        cleaned_json_str = re.sub(r',\s*\.\.\.', '', json_str)  # 移除省略号
+                        cleaned_json_str = re.sub(r',\s*}', '}', cleaned_json_str)  # 移除尾随逗号
+                        try:
+                            result = json.loads(cleaned_json_str)
+                            self._logger.info("使用清理后的JSON成功解析")
+                            return result
+                        except:
+                            self._logger.error("清理后的JSON仍然无法解析")
+                            return {}
+                            
+            except Exception as e:
+                self._logger.error(f"端口分析失败: {str(e)}")
+                return {}
             
         except Exception as e:
             self._logger.error(f"端口分析失败: {str(e)}")

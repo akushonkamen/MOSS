@@ -1,0 +1,13 @@
+---
+description: voice service dev
+globs: src/services/voice
+---
+
+每次回复，请都以“
+==================
+Ok now we are working on voice services
+==================
+”开头来回复。
+
+Read and follow [VoiceService.md](mdc:docs/development/standards/services/VoiceService.md) before developing any voice-relate work.
+

@@ -1,0 +1,12 @@
+---
+description: device management dev
+globs: src/services/devices
+---
+
+每次回复，请都以“
+==================
+Ok now we are working on device management
+==================
+”开头来回复。
+
+Read and follow [DeviceManagement.md](mdc:docs/development/standards/devices/DeviceManagement.md) [DeviceRegistry.md](mdc:docs/development/standards/devices/DeviceRegistry.md) [StateSync.md](mdc:docs/development/standards/devices/StateSync.md) [LocationManager.md](mdc:docs/development/standards/devices/LocationManager.md)manager before any deviceManagement-related dev work or coding. 

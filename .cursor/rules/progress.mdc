@@ -1,0 +1,6 @@
+---
+description: Progress tracking
+globs: MOSS/*
+---
+
+follow [PROGRESS.md](mdc:docs/development/PROGRESS.md) [PROGRESS_PROMPT.md](mdc:docs/development/PROGRESS_PROMPT.md) whatever we work on. 

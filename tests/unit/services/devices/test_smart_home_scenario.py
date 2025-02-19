@@ -1,4 +1,4 @@
-"""智能家居场景测试"""
+"""智能工业AI场景测试"""
 import pytest
 import json
 import asyncio

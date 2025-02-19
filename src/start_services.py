@@ -1,502 +1,417 @@
-"""智能家居服务启动脚本"""
+"""智能工业AI服务启动脚本"""
 import os
 import sys
 import asyncio
 import signal
-from typing import Dict, Any, List, Optional
-from loguru import logger
-from tabulate import tabulate
 import logging
+import argparse
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+import cmd
+import threading
+import time
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.services.audio.voice_interaction import VoiceInteractionManager, VoiceConfig
-from src.services.audio.recorder_service import AudioConfig as RecorderConfig
-from src.services.audio.player_service import AudioConfig as PlayerConfig
-from src.services.llm.llm_service import llm_service
-from src.services.devices.device_client import SmartLightClient, SmartACClient, SmartCurtainClient
-from src.services.devices.functions import register_device_functions
-from src.services.function_calling.registry import registry as function_registry, FunctionParameter
-from src.services.devices.base import registry as device_registry
-from src.services.core.entity import registry as entity_registry
-from src.services.devices.light_entity import LightEntity
-from src.services.devices.ac_entity import ACEntity
-from src.services.devices.curtain_entity import CurtainEntity
-from src.services.function_calling.parser import FunctionParser
-from src.services.function_calling.registry import FunctionDefinition
-from src.services.devices.device_info import DeviceInfo, DeviceParameter
-from src.services.devices.device_manager import DeviceManager
-from src.services.llm.decoderAgent import DecoderAgent
-from src.services.llm.expertAgent import ExpertAgent
-from src.services.devices.device_discovery import DeviceDiscoveryService
-from src.services.devices.smart_light import SmartLightClient
-from src.services.devices.smart_ac import SmartACClient
-from src.services.devices.smart_curtain import SmartCurtainClient
+from services.devices.managers.unified_device_manager import UnifiedDeviceManager
+from services.devices.discovery.discovery_service import discovery_service
+from services.devices.managers.state_manager import state_manager
+from services.events.event_bus import event_bus, EventType, Event
+from services.agents.dispatch.agent_dispatch_center import agent_dispatch_center
+from core.config import settings
+from services.devices.device_registry_server import registry_server
+
+class ServiceShell(cmd.Cmd):
+    """服务控制命令行"""
+    
+    intro = "欢迎使用Moss设备控制系统。输入 help 或 ? 查看命令列表。\n"
+    prompt = "(Moss) "
+    
+    def __init__(self, service_manager):
+        """初始化命令行
+        
+        Args:
+            service_manager: 服务管理器实例
+        """
+        super().__init__()
+        self.service_manager = service_manager
+        self._setup_event_handlers()
+        
+    def _setup_event_handlers(self):
+        """设置事件处理器"""
+        # 订阅设备注册事件
+        event_bus.subscribe(
+            event_type=EventType.DEVICE,
+            callback=self._on_device_registered,
+            event_name="device_registered"
+        )
+        
+        # 订阅设备注册失败事件
+        event_bus.subscribe(
+            event_type=EventType.DEVICE,
+            callback=self._on_device_registration_failed,
+            event_name="device_registration_failed"
+        )
+        
+        # 订阅设备状态变更事件
+        event_bus.subscribe(
+            event_type=EventType.DEVICE,
+            callback=self._on_device_state_changed,
+            event_name="state_changed"
+        )
+        
+    def do_list(self, arg):
+        """列出所有已注册的设备"""
+        try:
+            devices = self.service_manager.device_manager.get_all_devices()
+            if not devices:
+                print("当前没有已注册的设备")
+                return
+            
+            print("\n已注册设备列表:")
+            for device in devices:
+                print(f"设备ID: {device.device_id}")
+                print(f"  名称: {device.name}")
+                print(f"  类型: {device.device_type}")
+                print(f"  状态: {device.status}")
+                print(f"  最后在线时间: {device.last_seen}")
+                if hasattr(device, 'capabilities'):
+                    print(f"  设备能力: {', '.join(device.capabilities)}")
+                if hasattr(device, 'metadata'):
+                    print("  元数据:")
+                    for key, value in device.metadata.items():
+                        print(f"    {key}: {value}")
+                if device.error_message:
+                    print(f"  错误信息: {device.error_message}")
+                print()
+        except Exception as e:
+            print(f"获取设备列表失败: {str(e)}")
+            
+    def do_status(self, device_id):
+        """查看指定设备的状态
+        
+        Args:
+            device_id: 设备ID
+        """
+        try:
+            if not device_id:
+                print("请提供设备ID")
+                return
+            
+            device = self.service_manager.device_manager.get_device(device_id)
+            if not device:
+                print(f"未找到设备: {device_id}")
+                return
+            
+            print(f"\n设备 {device.name} ({device_id}) 的详细状态:")
+            print(f"基本信息:")
+            print(f"  - 设备类型: {device.device_type}")
+            print(f"  - 当前状态: {device.status}")
+            print(f"  - 最后在线: {device.last_seen}")
+            
+            if hasattr(device, 'capabilities'):
+                print("\n设备能力:")
+                for cap in device.capabilities:
+                    print(f"  - {cap}")
+            
+            if hasattr(device, 'metadata'):
+                print("\n设备元数据:")
+                for key, value in device.metadata.items():
+                    print(f"  - {key}: {value}")
+            
+            if device.error_message:
+                print(f"\n错误信息: {device.error_message}")
+                
+            # 获取设备状态
+            state = self.service_manager.device_manager._state_manager.get_device_state(device_id)
+            if state:
+                print("\n实时状态:")
+                for key, value in state.items():
+                    print(f"  - {key}: {value}")
+        except Exception as e:
+            print(f"获取设备状态失败: {str(e)}")
+            
+    def do_scan(self, arg):
+        """扫描网络中的设备"""
+        print("正在扫描网络中的设备...")
+        try:
+            # 触发一次设备扫描
+            local_ip = self.service_manager.discovery_service._get_local_ip()
+            asyncio.run_coroutine_threadsafe(
+                self.service_manager.discovery_service._scan_ports(local_ip),
+                self.service_manager._loop
+            )
+            print("扫描已启动，请等待扫描结果...")
+        except Exception as e:
+            print(f"启动扫描失败: {str(e)}")
+            
+    def do_monitor(self, arg):
+        """实时监控设备状态变化"""
+        print("开始监控设备状态变化 (按 Ctrl+C 停止)...")
+        try:
+            while True:
+                devices = self.service_manager.device_manager.get_all_devices()
+                if devices:
+                    os.system('clear' if os.name == 'posix' else 'cls')
+                    print("\n实时设备状态:")
+                    for device in devices:
+                        status_color = self._get_status_color(device.status)
+                        print(f"\n{status_color}设备: {device.name} ({device.device_id})")
+                        print(f"状态: {device.status}")
+                        print(f"最后更新: {device.last_seen}\033[0m")
+                time.sleep(2)  # 每2秒更新一次
+        except KeyboardInterrupt:
+            print("\n停止监控")
+            
+    def _get_status_color(self, status):
+        """获取状态对应的颜色代码"""
+        colors = {
+            "online": "\033[92m",  # 绿色
+            "offline": "\033[91m",  # 红色
+            "error": "\033[93m",    # 黄色
+            "registering": "\033[94m"  # 蓝色
+        }
+        return colors.get(status.lower(), "\033[0m")  # 默认无色
+        
+    def do_help(self, arg):
+        """显示帮助信息"""
+        print("""
+可用命令:
+  list          - 列出所有已注册的设备
+  status <id>   - 查看指定设备的详细状态
+  scan          - 扫描网络中的设备
+  monitor       - 实时监控所有设备状态
+  exit          - 退出系统
+  help          - 显示此帮助信息
+        """)
+
+    async def _on_device_registered(self, event: Event):
+        """设备注册成功事件处理"""
+        print(f"\n[设备注册] ✅ 新设备注册成功:")
+        print(f"  - 名称: {event.data['name']}")
+        print(f"  - 类型: {event.data['type']}")
+        print(f"  - ID: {event.data['device_id']}")
+        if event.data.get('capabilities'):
+            print(f"  - 能力: {', '.join(event.data['capabilities'])}")
+        print(f"\n{self.prompt}", end='', flush=True)
+        
+    async def _on_device_registration_failed(self, event: Event):
+        """设备注册失败事件处理"""
+        print(f"\n[设备注册] ❌ 设备注册失败:")
+        print(f"  - ID: {event.data['device_id']}")
+        print(f"  - 原因: {event.data['reason']}")
+        print(f"\n{self.prompt}", end='', flush=True)
+        
+    async def _on_device_state_changed(self, event: Event):
+        """设备状态变更事件处理"""
+        device = self.service_manager.device_manager.get_device(event.data['device_id'])
+        if device:
+            status_color = self._get_status_color(device.status)
+            print(f"\n[状态更新] {status_color}{device.name} ({device.device_id})")
+            print(f"  - 状态: {device.status}")
+            print(f"  - 时间: {event.data['timestamp']}\033[0m")
+            print(f"\n{self.prompt}", end='', flush=True)
 
 class ServiceManager:
     """服务管理器"""
     
     def __init__(self):
         """初始化服务管理器"""
-        self.device_manager = DeviceManager()
-        self.decoder = None
-        self.expert = None
-        self.voice_manager = None
-        self.logger = logging.getLogger(__name__)
-        self.llm_service = llm_service()
+        self.logger = logging.getLogger("service_manager")
         self.is_running = False
+        self._setup_logging()
+        self._loop = None  # 添加事件循环引用
         
-        # 配置日志
-        os.makedirs("logs", exist_ok=True)
-        logger.add(
-            "logs/services.log",
-            rotation="1 MB",
-            level="INFO",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+        # 核心服务组件
+        self.device_manager = UnifiedDeviceManager()
+        
+    def _setup_logging(self):
+        """配置日志系统"""
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
         )
-        
-    async def init_voice_service(self):
-        """初始化语音服务"""
-        # 创建配置
-        frame_duration = 0.03  # 30ms
-        sample_rate = 16000
-        chunk_size = int(sample_rate * frame_duration)
-        
-        config = VoiceConfig(
-            recorder_config=RecorderConfig(
-                channels=1,
-                sample_rate=sample_rate,
-                sample_width=2,
-                chunk_size=chunk_size
-            ),
-            player_config=PlayerConfig(
-                channels=1,
-                sample_rate=sample_rate,
-                sample_width=2,
-                chunk_size=chunk_size
-            ),
-            vad_aggressiveness=3,
-            silence_duration=1.0,
-            min_audio_length=0.5,
-            whisper_model="large",
-            whisper_language="zh"
-        )
-        
-        # 创建语音交互管理器
-        self.voice_manager = VoiceInteractionManager(
-            config=config,
-            on_speech_start=self.on_speech_start,
-            on_speech_end=self.on_speech_end,
-            on_transcribe=self.on_transcribe
-        )
-        
-    async def register_devices(self) -> List[DeviceInfo]:
-        """注册所有设备
-        
-        Returns:
-            List[DeviceInfo]: 设备信息列表
-        """
-        device_infos = []
-        
-        try:
-            # 获取所有设备
-            devices = await self.device_manager.get_all_devices()
-            
-            for device in devices:
-                try:
-                    # 获取设备类型
-                    device_type = device.__class__.__name__.replace("Client", "")
-                    self.logger.info(f"设备 {device.name} 类型: {device_type}")
-                    
-                    # 获取设备状态
-                    device_state = await device.get_state()
-                    self.logger.info(f"{device.name}状态: {device_state}")
-                    
-                    # 构建设备参数
-                    parameters = {}
-                    
-                    # 根据设备类型构建参数
-                    if isinstance(device, SmartLightClient):
-                        parameters = {
-                            "power": DeviceParameter(
-                                type="boolean",
-                                description="电源状态",
-                                current_value=device_state.get("is_on", False)
-                            ),
-                            "brightness": DeviceParameter(
-                                type="integer",
-                                description="亮度",
-                                current_value=device_state.get("brightness", 0),
-                                min_value=0,
-                                max_value=100,
-                                unit="%"
-                            )
-                        }
-                    elif isinstance(device, SmartACClient):
-                        parameters = {
-                            "power": DeviceParameter(
-                                type="boolean",
-                                description="电源状态",
-                                current_value=device_state.get("is_on", False)
-                            ),
-                            "temperature": DeviceParameter(
-                                type="integer",
-                                description="温度",
-                                current_value=device_state.get("temperature", 25),
-                                min_value=16,
-                                max_value=30,
-                                unit="°C"
-                            ),
-                            "mode": DeviceParameter(
-                                type="string",
-                                description="运行模式",
-                                current_value=device_state.get("mode", "auto"),
-                                enum_values=["auto", "cool", "heat", "dry", "fan"]
-                            )
-                        }
-                    elif isinstance(device, SmartCurtainClient):
-                        parameters = {
-                            "power": DeviceParameter(
-                                type="boolean",
-                                description="电源状态",
-                                current_value=device_state.get("is_open", False)
-                            ),
-                            "position": DeviceParameter(
-                                type="integer",
-                                description="位置",
-                                current_value=device_state.get("position", 0),
-                                min_value=0,
-                                max_value=100,
-                                unit="%"
-                            )
-                        }
-                    
-                    # 创建设备信息对象
-                    device_info = DeviceInfo(
-                        id=device.device_id,
-                        name=device.name,
-                        type=device_type,  # 使用处理后的设备类型
-                        location="",
-                        capabilities=[],
-                        parameters=parameters
-                    )
-                    device_infos.append(device_info)
-                    
-                except Exception as e:
-                    self.logger.error(f"获取设备 {device.name} 状态失败: {str(e)}")
-                    
-            return device_infos
-            
-        except Exception as e:
-            self.logger.error(f"注册设备失败: {str(e)}")
-            return []
-        
-    async def register_functions(self):
-        """注册控制函数"""
-        # 创建设备客户端
-        ac = SmartACClient("ac.001", "客厅空调", 8003)
-        light = SmartLightClient("light.001", "客厅灯", 8001)
-        curtain = SmartCurtainClient("curtain.001", "卧室窗帘", 8004)
-        
-        # 注册空调控制函数
-        self.llm_service.register_function(
-            ac.set_power,
-            description="控制空调电源",
-            parameters={
-                "power": {
-                    "name": "power",
-                    "type": "boolean",
-                    "description": "电源状态",
-                    "required": True
-                }
-            }
-        )
-        
-        self.llm_service.register_function(
-            ac.set_temperature,
-            description="设置空调温度",
-            parameters={
-                "temperature": {
-                    "name": "temperature",
-                    "type": "number",
-                    "description": "目标温度",
-                    "required": True,
-                    "min_value": 16,
-                    "max_value": 30
-                }
-            }
-        )
-        
-        self.llm_service.register_function(
-            ac.set_mode,
-            description="设置空调运行模式",
-            parameters={
-                "mode": {
-                    "name": "mode",
-                    "type": "string",
-                    "description": "运行模式",
-                    "required": True,
-                    "enum_values": ["auto", "cool", "heat", "dry", "fan"]
-                }
-            }
-        )
-        
-        # 注册灯光控制函数
-        self.llm_service.register_function(
-            light.set_power,
-            description="控制灯光电源",
-            parameters={
-                "power": {
-                    "name": "power",
-                    "type": "boolean",
-                    "description": "电源状态",
-                    "required": True
-                }
-            }
-        )
-        
-        self.llm_service.register_function(
-            light.set_brightness,
-            description="设置灯光亮度",
-            parameters={
-                "brightness": {
-                    "name": "brightness",
-                    "type": "number",
-                    "description": "亮度百分比",
-                    "required": True,
-                    "min_value": 0,
-                    "max_value": 100
-                }
-            }
-        )
-        
-        # 注册窗帘控制函数
-        self.llm_service.register_function(
-            curtain.set_position,
-            description="设置窗帘位置",
-            parameters={
-                "device_id": {
-                    "name": "device_id",
-                    "type": "string",
-                    "description": "设备ID",
-                    "required": True
-                },
-                "position": {
-                    "name": "position",
-                    "type": "integer",
-                    "description": "位置值",
-                    "required": True,
-                    "min_value": 0,
-                    "max_value": 100
-                }
-            }
-        )
-        
-    async def print_device_status(self, devices: List[DeviceInfo]):
-        """打印设备状态
-        
-        Args:
-            devices: 设备列表
-        """
-        # 准备表格数据
-        table_data = []
-        for device in devices:
-            # 获取设备图标
-            icon = self.get_device_icon(device.type)
-            
-            # 获取设备名称
-            name = f"{icon} {device.name}"
-            
-            # 获取设备状态
-            power = device.parameters.get("power")
-            if power:
-                status = "🟢 开启" if power.current_value else "⚫️ 关闭"
-            else:
-                status = "❓ 未知"
-            
-            # 获取详细信息
-            details = []
-            if "brightness" in device.parameters:
-                brightness = device.parameters["brightness"]
-                details.append(f"💡 亮度: {brightness.current_value}%")
-            if "temperature" in device.parameters:
-                temperature = device.parameters["temperature"]
-                mode = device.parameters["mode"]
-                details.append(f"🌡️ 温度: {temperature.current_value}°C")
-                details.append(f"❄️ 模式: {mode.current_value}")
-            if "position" in device.parameters:
-                position = device.parameters["position"]
-                details.append(f"📏 位置: {position.current_value}%")
-            
-            # 添加到表格数据
-            table_data.append([name, status, ", ".join(details)])
-        
-        logger.debug(f"表格数据: {table_data}")
-        
-        # 打印表格
-        print("\n当前设备状态:")
-        print("="*80)
-        headers = ["设备名称", "状态", "详细信息"]
-        print(tabulate(table_data, headers=headers, tablefmt="simple"))
-        print("="*80)
-
-    def get_device_icon(self, device_type: str) -> str:
-        """获取设备图标
-        
-        Args:
-            device_type: 设备类型
-            
-        Returns:
-            str: 设备图标
-        """
-        icons = {
-            "SmartLight": "🔌",
-            "SmartAC": "🎛️",
-            "SmartCurtain": "🪟"
-        }
-        return icons.get(device_type, "❓")
-        
-    async def on_transcribe(self, text: str):
-        """语音识别回调"""
-        logger.info(f"识别到语音: {text}")
-        try:
-            # 获取最新设备状态
-            devices = await self.register_devices()
-            
-            # 处理语音命令
-            result = await self.llm_service.execute_intent(text, devices)
-            print(result)
-            
-            # 等待设备状态更新
-            print("\n等待设备状态更新...")
-            await asyncio.sleep(1)
-            
-            # 打印最新状态
-            devices = await self.register_devices()
-            await self.print_device_status(devices)
-            
-            # 语音反馈
-            await self.voice_manager.speak(result)
-            
-        except Exception as e:
-            logger.error(f"处理语音命令错误: {e}")
-            await self.voice_manager.speak("抱歉，我没有理解您的意思")
-    
-    def on_speech_start(self):
-        """说话开始回调"""
-        logger.info("检测到说话开始")
-    
-    def on_speech_end(self):
-        """说话结束回调"""
-        logger.info("检测到说话结束")
         
     async def start(self):
-        """启动所有服务"""
+        """启动服务"""
         try:
-            self.logger.info("正在启动所有服务...")
+            self.logger.info("正在启动服务...")
+            self.is_running = True
+            self._loop = asyncio.get_running_loop()  # 保存事件循环引用
             
-            # 初始化LLM服务
-            self.decoder = DecoderAgent(
-                api_url="http://localhost:11434/api/chat",
-                model_name="llama3.1:latest"
-            )
-            await self.decoder.initialize()
+            # 初始化服务
+            await self._initialize_services()
             
-            self.expert = ExpertAgent(
-                agent_id="expert_001",
-                api_url="http://localhost:11434/api/chat",
-                model_name="llama3.1:latest"
+            # 订阅事件
+            self._subscribe_events()
+            
+            # 启动命令行界面
+            shell = ServiceShell(self)
+            shell_thread = threading.Thread(target=shell.cmdloop)
+            shell_thread.daemon = True
+            shell_thread.start()
+            
+            # 保持运行直到收到停止信号
+            while self.is_running:
+                await asyncio.sleep(1)
+                
+        except Exception as e:
+            self.logger.error(f"服务启动失败: {str(e)}")
+            raise
+        finally:
+            # 只有在服务不再运行时才停止
+            if not self.is_running:
+                await self.stop()
+            
+    async def stop(self):
+        """停止服务"""
+        if not self.is_running:
+            return
+            
+        try:
+            self.logger.info("正在停止服务...")
+            self.is_running = False
+            
+            # 停止设备发现服务
+            await discovery_service.stop()
+            
+            # 停止设备管理器
+            await self.device_manager.shutdown()
+            
+            # 停止状态管理器
+            await state_manager.shutdown()
+            
+            # 发布服务停止事件
+            await event_bus.publish(
+                EventType.SYSTEM,
+                "service_stopped",
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "components": ["discovery", "device", "state"]
+                }
             )
-            await self.expert.initialize()
+            
+        except Exception as e:
+            self.logger.error(f"停止服务失败: {str(e)}")
+            
+    async def _initialize_services(self):
+        """初始化所有服务"""
+        try:
+            # 初始化设备注册服务
+            await registry_server.start(host='0.0.0.0', port=9001)
+            self.logger.info("设备注册服务启动完成")
             
             # 初始化设备管理器
             await self.device_manager.initialize()
             
-            # 注册设备
-            devices = await self.register_devices()
-            self.logger.info(f"获取到的设备列表: {[f'{d.name} ({d.type})' for d in devices]}")
+            # 初始化智能体调度中心
+            await agent_dispatch_center.initialize()
             
-            # 注册设备控制函数
-            await self.register_functions()
-            self.logger.info("设备控制函数注册完成")
+            # 启动设备发现服务
+            await discovery_service.start(enable_port_scan=settings.ENABLE_PORT_SCAN)
             
-            # 初始化语音配置
-            frame_duration = 0.03  # 30ms
-            sample_rate = 16000
-            chunk_size = int(sample_rate * frame_duration)
-            
-            config = VoiceConfig(
-                recorder_config=RecorderConfig(
-                    channels=1,
-                    sample_rate=sample_rate,
-                    sample_width=2,
-                    chunk_size=chunk_size
-                ),
-                player_config=PlayerConfig(
-                    channels=1,
-                    sample_rate=sample_rate,
-                    sample_width=2,
-                    chunk_size=chunk_size
-                ),
-                vad_aggressiveness=3,
-                silence_duration=1.0,
-                min_audio_length=0.5,
-                whisper_model="large",
-                whisper_language="zh"
+            # 发布服务启动事件
+            await event_bus.publish(
+                EventType.SYSTEM,
+                "service_started",
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "components": ["registry", "discovery", "device", "state", "agents"]
+                }
             )
             
-            # 初始化语音交互管理器
-            self.voice_manager = VoiceInteractionManager(
-                config=config,
-                on_transcribe=self.on_transcribe,
-                on_speech_start=self.on_speech_start,
-                on_speech_end=self.on_speech_end
-            )
-            await self.voice_manager.initialize()
-            
-            # 打印设备状态
-            await self.print_device_status(devices)
-            
-            # 启动语音助手
-            self.logger.info("启动语音助手...")
-            await self.voice_manager.start()
-            
-            # 保持主循环运行
-            self.is_running = True
-            try:
-                while self.is_running:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                self.logger.info("收到退出信号")
-                self.is_running = False
-                await self.stop()
+            self.logger.info("所有服务初始化完成")
             
         except Exception as e:
-            self.logger.error(f"启动服务时出错: {str(e)}")
-            print(f"启动服务时出错: {str(e)}")
+            self.logger.error(f"服务初始化失败: {str(e)}")
             raise
             
-    def _signal_handler(self, signum, frame):
-        """信号处理器"""
-        logger.info(f"收到信号: {signum}")
-        self.is_running = False
-            
-    async def stop(self):
-        """停止所有服务"""
-        logger.info("正在停止所有服务...")
+    def _subscribe_events(self):
+        """订阅事件"""
+        # 订阅设备发现事件
+        event_bus.subscribe(
+            event_type=EventType.DEVICE,
+            callback=self._on_device_discovered,
+            event_name="device_discovered"
+        )
         
-        # 停止语音服务
-        if self.voice_manager:
-            self.voice_manager.stop()
+        # 订阅设备状态变更事件
+        event_bus.subscribe(
+            event_type=EventType.DEVICE,
+            callback=self._on_device_state_changed,
+            event_name="state_changed"
+        )
+        
+        # 订阅错误事件
+        event_bus.subscribe(
+            event_type=EventType.ERROR,
+            callback=self._on_error
+        )
             
-        logger.info("所有服务已停止")
+    async def _on_device_discovered(self, event: Event):
+        """设备发现事件处理
+        
+        Args:
+            event: 事件对象
+        """
+        device_id = event.data["device_id"]
+        name = event.data["name"]
+        self.logger.info(f"发现新设备: {name} ({device_id})")
+        
+    async def _on_device_state_changed(self, event: Event):
+        """设备状态变更事件处理
+        
+        Args:
+            event: 事件对象
+        """
+        device_id = event.data["device_id"]
+        device = await self.device_manager.get_device(device_id)
+        if device:
+            self.logger.info(f"设备 {device.name} 状态已更新")
+            
+    async def _on_error(self, event: Event):
+        """错误事件处理
+        
+        Args:
+            event: 事件对象
+        """
+        self.logger.error(
+            f"错误事件: {event.name} - {event.data.get('message', '未知错误')}"
+        )
 
-async def main():
+def main():
     """主函数"""
-    # 创建并启动服务管理器
+    parser = argparse.ArgumentParser(description="Moss设备控制系统")
+    parser.add_argument("--no-shell", action="store_true", help="不启动交互式命令行")
+    args = parser.parse_args()
+    
+    # 创建服务管理器
     manager = ServiceManager()
-    await manager.start()
+    
+    # 注册信号处理
+    def signal_handler(signum, frame):
+        print("\n正在停止服务...")
+        manager.is_running = False
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # 运行服务
+    try:
+        if not args.no_shell:
+            # 启动带命令行的服务
+            shell = ServiceShell(manager)
+            shell_thread = threading.Thread(target=shell.cmdloop)
+            shell_thread.daemon = True
+            shell_thread.start()
+            
+        asyncio.run(manager.start())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logging.error(f"服务运行失败: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    main() 
